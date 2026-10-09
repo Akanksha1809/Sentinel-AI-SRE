@@ -201,3 +201,10 @@ def test_reads_pass_through(client: TestClient, upstream: Upstream) -> None:
 def test_oversized_body_refused(client: TestClient) -> None:
     r = client.post("/v1.54/containers/create?name=shop-api-1", content=b"x" * 70_000)
     assert r.status_code == 403
+
+
+def test_newline_suffixed_paths_are_denied(client: TestClient, upstream: Upstream) -> None:
+    for path in ("/v1.54/containers/create%0A", "/v1.54/containers/jenkins%0A/stop"):
+        # Refused by the guard (403) or unroutable (404): never forwarded either way.
+        assert client.post(path, content=b"{}").status_code in (403, 404)
+    assert upstream.calls == []

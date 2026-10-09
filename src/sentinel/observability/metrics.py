@@ -45,4 +45,16 @@ class Metrics:
         self.jobs = Gauge(
             "sentinel_jobs", "Jobs by status (refreshed by the worker).", ["status"], registry=r
         )
+        self.evidence_collections = Counter(
+            "sentinel_evidence_collections_total",
+            "Evidence collections by status.",
+            ["status"],
+            registry=r,
+        )
+        self.evidence_seconds = Histogram(
+            "sentinel_evidence_collection_seconds",
+            "Evidence collection duration.",
+            registry=r,
+            buckets=(0.5, 1, 2, 5, 10, 20, 30, 60),
+        )
         self.build = Gauge("sentinel_build_info", "Build info.", ["version"], registry=r)

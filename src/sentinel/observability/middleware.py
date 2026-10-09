@@ -28,7 +28,7 @@ class ObservabilityMiddleware:
             return
         headers = dict(scope.get("headers") or [])
         incoming = headers.get(b"x-correlation-id", b"").decode("latin-1")
-        cid = incoming if _CID.match(incoming) else uuid.uuid4().hex
+        cid = incoming if _CID.fullmatch(incoming) else uuid.uuid4().hex
         token = correlation_id_var.set(cid)
         status = 500
         start = time.perf_counter()

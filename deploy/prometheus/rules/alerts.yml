@@ -97,6 +97,25 @@ groups:
         annotations:
           summary: "Sentinel API is down: alerts are not being turned into incidents"
 
+      - alert: SentinelWorkerDown
+        expr: up{job="sentinel-worker"} == 0 or absent(up{job="sentinel-worker"})
+        for: 1m
+        labels:
+          severity: critical
+          service: sentinel
+        annotations:
+          summary: "Sentinel worker is down: evidence is not being collected"
+
+      - alert: SentinelJobsFailing
+        expr: sentinel_jobs{status="failed"} > 0 and delta(sentinel_jobs{status="failed"}[10m]) > 0
+        for: 0s
+        labels:
+          severity: warning
+          service: sentinel
+        annotations:
+          summary: "Sentinel background jobs are failing permanently"
+          description: "{{ $value | printf \"%.0f\" }} new failed job(s) in 10 minutes."
+
       - alert: SentinelWebhookRejections
         expr: sum(increase(sentinel_webhook_rejected_total[5m])) > 0
         for: 0s

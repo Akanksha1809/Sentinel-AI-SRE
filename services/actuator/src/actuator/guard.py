@@ -192,7 +192,7 @@ def create_guard_app(
         if len(body) > MAX_BODY_BYTES:
             return deny(method, url_path, "request body too large")
 
-        if method == "POST" and CREATE_RE.match(url_path):
+        if method == "POST" and CREATE_RE.fullmatch(url_path):
             try:
                 spec = json.loads(body or b"{}")
                 if not isinstance(spec, dict):
@@ -200,7 +200,7 @@ def create_guard_app(
                 validate_create(spec, settings, request.query_params.get("name"))
             except (GuardViolationError, ValueError) as exc:
                 return deny(method, url_path, str(exc))
-        elif method in ("POST", "DELETE") and (m := MUTATE_RE.match(url_path)):
+        elif method in ("POST", "DELETE") and (m := MUTATE_RE.fullmatch(url_path)):
             target = m.group(1)
             r = await client.get(f"/containers/{target}/json")
             if r.status_code != 200:

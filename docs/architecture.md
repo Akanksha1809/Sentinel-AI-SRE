@@ -1,7 +1,7 @@
 # Sentinel — Architecture
 
-> Status: Phase 2 implemented (target system + monitoring stack). Sentinel's own API and
-> worker (Phases 3+) are still design; see `PROJECT_STATUS.md` for what is built and verified.
+> Status: Phases 1–4 implemented (target system, monitoring, ingestion/incidents, evidence).
+> Investigation, remediation and UI (Phases 5–7) are still design; see `PROJECT_STATUS.md`.
 
 Sentinel is an AI-assisted SRE incident response platform. It detects incidents
 from real alert signals, collects evidence from metrics, logs and change history,
@@ -342,3 +342,30 @@ Observation that affects Phase 6: the rolling restart caused 16 connection error
 load generator, about 0.9% of 3 minutes of traffic. Docker DNS round-robin keeps
 returning a replica while it restarts. Recovery verification must therefore start its
 observation window *after* the action completes, with a short settle delay.
+
+---
+
+## 11. Evidence gathering (Phase 4, as built)
+
+`sentinel-worker` runs `evidence.collect` jobs. They are queued (deduplicated, with a 10s
+delay so logs are shipped) when an incident opens, reopens or gains an alert, and when a
+responder asks for a refresh.
+
+| Ref | Source | What it shows |
+|---|---|---|
+| `metric.error_ratio`, `metric.error_ratio_by_version` | Prometheus (SLI rules) | 5xx ratio, step change and onset |
+| `metric.request_rate`, `metric.latency_p95` | Prometheus | throughput, p95 |
+| `metric.memory_ratio`, `metric.cpu_ratio`, `metric.restarts`, `metric.replicas_running` | Prometheus (actuator fleet metrics) | saturation and stability per replica |
+| `metric.errors_by_version` | Prometheus (instant) | share of 5xx served by each version |
+| `log.errors`, `log.warnings` | Loki (indexed `level` label) | sanitised samples, grouped into signatures (message + final exception line) with version/config counts |
+| `log.error_rate_by_version` | Loki (metric query) | error log volume by version and config revision |
+| `change.deployments` | Sentinel DB | deployments in the hour before onset (rollbacks included) |
+| `derived.onset` | computed | earliest significant step in a primary metric, bounded by the first alert |
+| `derived.change_correlation` | computed | `0.5·time + 0.3·5xx share + 0.2·error-log share` per non-rollback change, with reasons |
+
+Design points:
+- Queries are code-owned templates; the only variable (service) is fullmatch-validated and escaped.
+- Queries run concurrently and in isolation. A failure becomes a `gap` item, and the collection is marked `partial`.
+- Log text is sanitised: control characters stripped, secrets and PII redacted, injection-like text flagged and kept as data.
+- Onset and step detection use only data up to 2 minutes after the first alert, so a later recovery cannot dilute the change.
+- Measured timings (live, 2026-10-09): collection takes 2–3 seconds; evidence is available about 15 seconds after the incident opens.

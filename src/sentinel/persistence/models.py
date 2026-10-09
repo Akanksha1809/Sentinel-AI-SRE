@@ -22,7 +22,7 @@ from sqlalchemy import (
     UniqueConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 from sentinel.ids import uuid7
@@ -237,3 +237,58 @@ class AuditEvent(Base):
     hash: Mapped[str] = mapped_column(String(64), unique=True)
 
     __table_args__ = (Index("ix_audit_events_subject", "subject_type", "subject_id"),)
+
+
+class EvidenceCollection(Base):
+    """One evidence-gathering run for an incident (refreshes create new collections)."""
+
+    __tablename__ = "evidence_collections"
+
+    id: Mapped[uuid.UUID] = _pk()
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="RESTRICT"), index=True
+    )
+    status: Mapped[str] = mapped_column(String(10))  # complete | partial | failed
+    window_start: Mapped[datetime]
+    window_end: Mapped[datetime]
+    onset: Mapped[datetime]
+    errors: Mapped[Json]
+    started_at: Mapped[datetime]
+    finished_at: Mapped[datetime]
+    trigger: Mapped[str] = mapped_column(String(80))
+
+    items: Mapped[list[EvidenceItem]] = relationship(
+        back_populates="collection", order_by="EvidenceItem.position"
+    )
+
+    __table_args__ = (CheckConstraint("status IN ('complete','partial','failed')", name="status"),)
+
+
+class EvidenceItem(Base):
+    """An observation (metric/log/change), derived signal, or data gap. Never AI output."""
+
+    __tablename__ = "evidence_items"
+
+    id: Mapped[uuid.UUID] = _pk()
+    collection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("evidence_collections.id", ondelete="RESTRICT"), index=True
+    )
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="RESTRICT"), index=True
+    )
+    position: Mapped[int] = mapped_column(Integer)
+    ref: Mapped[str] = mapped_column(String(64))
+    kind: Mapped[str] = mapped_column(String(10))
+    source: Mapped[str] = mapped_column(String(20))
+    title: Mapped[str] = mapped_column(String(200))
+    summary: Mapped[str] = mapped_column(Text)
+    query: Mapped[str | None] = mapped_column(Text)
+    data: Mapped[Json]
+    flags: Mapped[list[str]] = mapped_column(ARRAY(String(40)))
+
+    collection: Mapped[EvidenceCollection] = relationship(back_populates="items")
+
+    __table_args__ = (
+        UniqueConstraint("collection_id", "ref", name="uq_evidence_items_collection_ref"),
+        CheckConstraint("kind IN ('metric','log','change','derived','gap')", name="kind"),
+    )

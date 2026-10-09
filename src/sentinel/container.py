@@ -6,6 +6,7 @@ Tests construct a Container with fakes (clock, settings) and a test database eng
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
@@ -39,6 +40,7 @@ class Container:
         clock = clock or SystemClock()
         engine = engine or make_engine(settings.database_url(), settings.db_pool_size)
         audit = AuditLog(clock)
+        jobs = JobQueue(clock)
         return cls(
             settings=settings,
             clock=clock,
@@ -46,8 +48,14 @@ class Container:
             sessions=make_sessionmaker(engine),
             metrics=Metrics(),
             audit=audit,
-            incidents=IncidentService(clock, audit, settings.reopen_window),
+            incidents=IncidentService(
+                clock,
+                audit,
+                settings.reopen_window,
+                jobs,
+                timedelta(seconds=settings.evidence_delay_s),
+            ),
             deployments=DeploymentService(clock, audit, settings.environment),
-            jobs=JobQueue(clock),
+            jobs=jobs,
             expected_migration=migration_head(),
         )

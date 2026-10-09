@@ -28,6 +28,7 @@ from sentinel.domain.enums import AlertStatus, EventKind, IncidentStatus, Severi
 from sentinel.domain.incidents import ACTIVE, check_transition
 from sentinel.ids import Clock
 from sentinel.ingestion.alertmanager import NormalizedAlert
+from sentinel.jobs.queue import JobQueue
 from sentinel.observability.context import correlation_id_var
 from sentinel.persistence.models import Alert, Incident, IncidentEvent
 
@@ -52,10 +53,52 @@ class IngestResult:
 
 
 class IncidentService:
-    def __init__(self, clock: Clock, audit: AuditLog, reopen_window: timedelta) -> None:
+    def __init__(
+        self,
+        clock: Clock,
+        audit: AuditLog,
+        reopen_window: timedelta,
+        jobs: JobQueue | None = None,
+        evidence_delay: timedelta = timedelta(0),
+    ) -> None:
         self._clock = clock
         self._audit = audit
         self._reopen_window = reopen_window
+        self._jobs = jobs
+        self._evidence_delay = evidence_delay
+
+    async def request_evidence(
+        self,
+        session: AsyncSession,
+        incident_id: uuid.UUID,
+        trigger: str,
+        *,
+        delay: timedelta | None = None,
+    ) -> uuid.UUID | None:
+        """Queue evidence collection (deduplicated per incident). None if already queued."""
+        if self._jobs is None:
+            return None
+        return await self._jobs.enqueue(
+            session,
+            "evidence.collect",
+            {"incident_id": str(incident_id), "trigger": trigger},
+            dedupe_key=f"evidence.collect:{incident_id}",
+            delay=self._evidence_delay if delay is None else delay,
+        )
+
+    async def record_event(
+        self,
+        session: AsyncSession,
+        incident_id: uuid.UUID,
+        kind: EventKind,
+        actor: str,
+        summary: str,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        incident = await self.get(session, incident_id)
+        self._event(session, incident, kind, actor, summary, data)
+        incident.updated_at = self._clock.now()
+        await session.flush()
 
     # ------------------------------------------------------------------ helpers
     def _event(
@@ -193,6 +236,13 @@ class IncidentService:
                     },
                 )
                 result.touch(incident.id, outcome)
+                await self.request_evidence(
+                    session,
+                    incident.id,
+                    "incident.created"
+                    if outcome == "created"
+                    else f"alert.attached:{na.alertname}",
+                )
             elif previous_status == AlertStatus.RESOLVED.value:
                 self._event(
                     session,

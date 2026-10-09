@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 
@@ -36,6 +37,66 @@ def _cmd_api(_: argparse.Namespace) -> int:
         server_header=False,
         proxy_headers=False,
     )
+    return 0
+
+
+def _cmd_worker(_: argparse.Namespace) -> int:
+    import signal
+
+    import structlog
+    from prometheus_client import start_http_server
+
+    from sentinel.config import load_settings
+    from sentinel.container import Container
+    from sentinel.evidence.clients import LokiClient, PrometheusClient
+    from sentinel.evidence.collector import EvidenceCollector
+    from sentinel.evidence.service import JOB_KIND, EvidenceService
+    from sentinel.jobs.worker import Worker
+    from sentinel.observability.logging import configure_logging
+
+    settings = load_settings()
+    configure_logging(settings.log_level, "sentinel-worker")
+    log = structlog.get_logger("sentinel.worker")
+    container = Container.build(settings)
+    start_http_server(settings.worker_metrics_port, registry=container.metrics.registry)
+
+    async def run() -> None:
+        prometheus = PrometheusClient(settings.prometheus_internal_url)
+        loki = LokiClient(settings.loki_internal_url, timeout_s=settings.loki_timeout_s)
+        evidence = EvidenceService(
+            container.sessions,
+            container.clock,
+            container.incidents,
+            EvidenceCollector(prometheus, loki),
+            container.metrics,
+        )
+        worker = Worker(container.sessions, container.jobs, {JOB_KIND: evidence.handle_job})
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, stop.set)
+
+        async def refresh_gauges() -> None:
+            while not stop.is_set():
+                try:
+                    async with container.sessions() as session:
+                        counts = await container.jobs.counts(session)
+                    for status in ("pending", "running", "done", "failed"):
+                        container.metrics.jobs.labels(status).set(counts.get(status, 0))
+                except Exception:
+                    log.warning("job gauge refresh failed", exc_info=True)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), 15)
+
+        try:
+            await asyncio.gather(worker.run_forever(stop), refresh_gauges())
+        finally:
+            await prometheus.aclose()
+            await loki.aclose()
+            await container.engine.dispose()
+            log.info("worker stopped")
+
+    asyncio.run(run())
     return 0
 
 
@@ -116,6 +177,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="sentinel")
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("api", help="run the HTTP API").set_defaults(fn=_cmd_api)
+    sub.add_parser("worker", help="run the background job worker").set_defaults(fn=_cmd_worker)
     db = sub.add_parser("db").add_subparsers(dest="db_command", required=True)
     db.add_parser("init", help="create roles and run migrations").set_defaults(fn=_cmd_db_init)
     tok = sub.add_parser("token").add_subparsers(dest="token_command", required=True)

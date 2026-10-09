@@ -31,8 +31,8 @@ FastAPI generates the OpenAPI spec at `/api/v1/openapi.json`. The contract tests
 | POST | `/incidents/{id}/resolve` | responder | `{reason}`. Manual; audited; `resolved_verified=false` |
 | POST | `/incidents/{id}/close` | responder | Only from `resolved` (otherwise 409 with `current_status`) |
 | POST | `/incidents/{id}/notes` | responder | `{text}` → timeline event |
-| GET | `/incidents/{id}/evidence` | viewer | `EvidenceItem[]` (observations + derived) |
-| POST | `/incidents/{id}/evidence/refresh` | responder | Enqueues collection → `202 {job_id}` *(Phase 4)* |
+| GET | `/incidents/{id}/evidence?collection=` | viewer | Latest (or given) collection: `{status: complete\|partial\|failed, trigger, window_start/end, onset, errors[], items[{ref, kind: metric\|log\|change\|derived\|gap, source, title, summary, query, flags[], data}]}`. 404 until the first collection |
+| POST | `/incidents/{id}/evidence/refresh` | responder | `202 {queued, job_id, detail}`; deduplicated per incident (`queued=false` if one is pending/running); audited |
 
 ## Investigations
 

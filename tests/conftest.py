@@ -89,7 +89,10 @@ def pg() -> Iterator[PgInfo]:
         yield info
 
 
-_TABLES = "alerts, incident_events, incidents, deployments, principals, jobs, audit_events"
+_TABLES = (
+    "evidence_items, evidence_collections, alerts, incident_events, incidents, deployments, "
+    "principals, jobs, audit_events"
+)
 
 
 @pytest.fixture

@@ -77,3 +77,9 @@ The privileged container the first probe created (never started) was removed imm
 - **T12 (audit tampering):** the trigger blocks UPDATE/DELETE/TRUNCATE even for the table owner; the app role lacks those privileges; a superuser edit with triggers suspended is detected at the exact sequence number (`tests/integration/test_database.py`).
 - **T13 (secrets):** DB passwords and tokens come only from secret files; the superuser password is mounted only into the one-shot `sentinel-migrate` container.
 - **T15 (alert floods):** at most 200 alerts per payload, body cap, idempotent upserts; repeated notifications only bump `receive_count`.
+
+### 2026-10-09: Phase 4 controls verified by tests
+- **T1 (prompt injection, partial; the structural defence is in Phases 5–6):** injection-like log text is flagged (`possible_prompt_injection`), kept as sanitised data, and noted in the summary (`tests/unit/test_evidence_collector.py`, `test_evidence_pure.py`).
+- **T7 (query injection):** only code-owned templates run. Hostile service names (`x"} or vector(1)…`, backslashes, newlines) are refused before any query. **A real bug was found and fixed:** patterns anchored with `$` and checked with `re.match` accepted a trailing newline. Every validator now uses `fullmatch`, with regression tests at each untrusted-input entry point (ingestion, templates, docker-guard).
+- **T13 (secrets in evidence):** bearer/basic credentials, JWTs, AWS keys, Sentinel tokens, `password=`-style pairs, connection-string passwords and emails are redacted before storage (`tests/unit/test_evidence_pure.py`).
+- **Evidence integrity:** the app role cannot UPDATE or DELETE evidence (`tests/integration/test_evidence_flow.py`).

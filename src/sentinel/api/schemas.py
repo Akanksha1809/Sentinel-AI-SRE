@@ -195,3 +195,33 @@ class AuditOut(BaseModel):
     correlation_id: str | None
     data: dict[str, Any]
     hash: str
+
+
+class EvidenceItemOut(BaseModel):
+    ref: str
+    kind: str
+    source: str
+    title: str
+    summary: str
+    query: str | None
+    flags: list[str]
+    data: dict[str, Any]
+
+
+class EvidenceCollectionOut(BaseModel):
+    id: uuid.UUID
+    incident_id: uuid.UUID
+    status: str
+    trigger: str
+    window_start: datetime
+    window_end: datetime
+    onset: datetime
+    errors: list[str]
+    finished_at: datetime
+    items: list[EvidenceItemOut]
+
+
+class RefreshAccepted(BaseModel):
+    queued: bool
+    job_id: uuid.UUID | None
+    detail: str

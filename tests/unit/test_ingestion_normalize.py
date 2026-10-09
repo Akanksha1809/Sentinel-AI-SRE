@@ -104,3 +104,12 @@ def test_malformed_payloads_rejected(bad: dict[str, Any]) -> None:
 
 def test_clean_text_keeps_newlines_and_tabs() -> None:
     assert clean_text("a\nb\tc\rd", 100) == "a\nb\tcd"
+
+
+@pytest.mark.parametrize("service", ["shop-api\n", "shop-api\nservice=other"])
+def test_trailing_newline_cannot_sneak_into_grouping_key(service: str) -> None:
+    """Regression: `re.match` with `$` accepts a trailing newline; fullmatch does not."""
+    a = alert(labels={"alertname": "A\n", "service": service})
+    [na] = normalize(AMWebhook.model_validate(payload(a)), "local")
+    assert na.service == "unknown"
+    assert na.alertname == "UnnamedAlert"

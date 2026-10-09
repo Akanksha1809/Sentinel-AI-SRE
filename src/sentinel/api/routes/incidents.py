@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import re
 import uuid
+from datetime import timedelta
 from typing import Annotated
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -16,15 +17,19 @@ from sentinel.api.schemas import (
     AckIn,
     AlertOut,
     EventOut,
+    EvidenceCollectionOut,
+    EvidenceItemOut,
     IncidentDetail,
     IncidentPage,
     IncidentSummary,
     NoteIn,
+    RefreshAccepted,
     ResolveIn,
     telemetry_links,
 )
 from sentinel.container import Container
-from sentinel.domain.enums import IncidentStatus, Severity
+from sentinel.domain.enums import EventKind, IncidentStatus, Severity
+from sentinel.evidence.service import latest_collection
 from sentinel.incidents.service import IncidentNotFoundError
 from sentinel.persistence.models import Incident
 
@@ -34,7 +39,7 @@ _SHORT_ID = re.compile(r"^INC-(\d{1,12})$", re.IGNORECASE)
 
 async def resolve_id(session: AsyncSession, ref: str) -> uuid.UUID:
     """Accept either the UUID or the human short id (INC-0042)."""
-    if m := _SHORT_ID.match(ref):
+    if m := _SHORT_ID.fullmatch(ref):
         found = (
             await session.execute(select(Incident.id).where(Incident.number == int(m.group(1))))
         ).scalar_one_or_none()
@@ -155,3 +160,64 @@ async def add_note(
         await container.incidents.add_note(session, iid, who.actor, body.text)
     async with container.sessions() as session:
         return await _detail(container, session, iid)
+
+
+@router.get("/{ref}/evidence", response_model=EvidenceCollectionOut)
+async def get_evidence(
+    ref: str, container: ContainerDep, _: Viewer, collection: uuid.UUID | None = None
+) -> EvidenceCollectionOut:
+    """Latest evidence collection (or a specific one). Observations only; no AI output."""
+    async with container.sessions() as session:
+        iid = await resolve_id(session, ref)
+        found = await latest_collection(session, iid, collection)
+    if found is None:
+        raise HTTPException(404, "no evidence collected for this incident yet")
+    return EvidenceCollectionOut(
+        id=found.id,
+        incident_id=found.incident_id,
+        status=found.status,
+        trigger=found.trigger,
+        window_start=found.window_start,
+        window_end=found.window_end,
+        onset=found.onset,
+        errors=list(found.errors.get("errors", [])),
+        finished_at=found.finished_at,
+        items=[
+            EvidenceItemOut(
+                ref=i.ref,
+                kind=i.kind,
+                source=i.source,
+                title=i.title,
+                summary=i.summary,
+                query=i.query,
+                flags=list(i.flags),
+                data=i.data,
+            )
+            for i in found.items
+        ],
+    )
+
+
+@router.post("/{ref}/evidence/refresh", status_code=202, response_model=RefreshAccepted)
+async def refresh_evidence(ref: str, container: ContainerDep, who: Responder) -> RefreshAccepted:
+    async with container.sessions.begin() as session:
+        iid = await resolve_id(session, ref)
+        job_id = await container.incidents.request_evidence(
+            session, iid, f"manual:{who.actor}", delay=timedelta(0)
+        )
+        if job_id is not None:
+            await container.incidents.record_event(
+                session, iid, EventKind.EVIDENCE_REQUESTED, who.actor, "Evidence refresh requested"
+            )
+            await container.audit.append(
+                session,
+                actor=who.actor,
+                action="evidence.refresh_requested",
+                subject_type="incident",
+                subject_id=iid,
+            )
+    if job_id is None:
+        return RefreshAccepted(
+            queued=False, job_id=None, detail="a collection is already queued or running"
+        )
+    return RefreshAccepted(queued=True, job_id=job_id, detail="queued")

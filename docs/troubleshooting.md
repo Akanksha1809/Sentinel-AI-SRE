@@ -50,3 +50,14 @@ installer tries to relocate it, which fails on a read-only root filesystem
 (`unlinkat .../plugins-bundled/loki: read-only file system` in the Grafana logs).
 The stack sets `GF_PLUGINS_PREINSTALL_DISABLED=true`, so Grafana uses the bundled copy.
 This also means Grafana makes no plugin downloads at runtime.
+
+## Loki queries time out over long windows
+`{service="x"} | json | level=~"error"` makes Loki parse every line; over 2 hours at
+10 rps it timed out. Sentinel selects on the indexed `level` stream label that Alloy
+promotes (`{service="x", level=~"error|critical"}`), which returns in about 1–6 seconds.
+The worker's Loki timeout is `SENTINEL_LOKI_TIMEOUT_S` (default 20s).
+
+## An incident shows no evidence
+Check `make logs SERVICE=sentinel-worker` and the `sentinel_jobs` metric. Evidence is
+collected about 10 seconds after an incident opens. `POST /api/v1/incidents/<id>/evidence/refresh`
+(responder) queues another collection.

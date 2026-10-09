@@ -2,7 +2,7 @@
 
 All tables use `uuid` PKs (UUIDv7, so they sort by time) and `timestamptz` in UTC. JSONB columns are validated by Pydantic before write. Alembic owns all DDL (`src/sentinel/migrations`).
 
-> **Implemented in migration 0001 (Phase 3):** `incidents`, `alerts`, `incident_events`, `deployments`, `principals`, `jobs`, `audit_events`. The remaining tables arrive with their phases (evidence: 4, investigations/hypotheses: 5, runbooks/actions/approvals/executions/verifications: 6, postmortems: 7).
+> **Implemented in migration 0001 (Phase 3):** `incidents`, `alerts`, `incident_events`, `deployments`, `principals`, `jobs`, `audit_events`. Migration 0002 (Phase 4) adds `evidence_collections` and `evidence_items`. The remaining tables arrive with their phases (investigations/hypotheses: 5, runbooks/actions/approvals/executions/verifications: 6, postmortems: 7).
 >
 > **Deviation from the Phase 1 design:** there is no `services` table. Incidents and deployments carry `service` + `environment` as validated text, and grouping uses `dedupe_key = environment/service`. A table would add a join with no current consumer; it can be introduced when per-service metadata (owners, SLO targets) is needed.
 
@@ -30,7 +30,8 @@ erDiagram
 | `incidents` | `id, number (sequence → INC-0001), service, environment, dedupe_key, title, status, severity, opened_at, acknowledged_at/by, resolved_at, resolution, resolved_verified, closed_at, updated_at, version` | `version` for optimistic locking. Partial unique index on `dedupe_key WHERE status NOT IN ('resolved','closed')`, so there is only one active incident per key. `resolved_verified=false` marks manual resolution |
 | `incident_events` | `id, incident_id, at, kind, actor, summary, data jsonb, correlation_id` | Timeline for the UI and postmortem |
 | `deployments` | `id, service, environment, version, config_revision, previous_version, previous_config_revision, deployed_at, deployed_by, source, change_ref, recorded_at` | Unique (NULLS NOT DISTINCT) on `(service, version, config_revision, deployed_at)`, so recording is idempotent |
-| `evidence_items` | `id, incident_id, kind (metric/log/deployment/derived), source, query, range_start, range_end, summary, data jsonb, flags text[], collected_at` | **Observations.** `flags` includes `possible_prompt_injection`, `truncated` |
+| `evidence_collections` | `id, incident_id, status (complete/partial/failed), window_start, window_end, onset, errors jsonb, started_at, finished_at, trigger` | One per collection run; refreshes add new ones |
+| `evidence_items` | `id, collection_id, incident_id, position, ref (unique per collection, e.g. metric.error_ratio), kind (metric/log/change/derived/gap), source, title, summary, query, data jsonb, flags text[]` | **Observations, derived signals and data gaps only, never AI output.** `flags`: `primary`, `no_data`, `redacted`, `truncated`, `possible_prompt_injection`. App role: INSERT/SELECT only (immutable) |
 | `investigations` | `id, incident_id, status (pending/running/succeeded/failed), provider, model, prompt_version, input_hash, started_at, finished_at, error, report jsonb, rejected_suggestions jsonb` | Full validated report stored |
 | `hypotheses` | `id, investigation_id, rank, statement, confidence numeric(3,2), cited_evidence uuid[], is_primary bool, generated bool default true` | **AI-generated** |
 | `runbook_versions` | `id, runbook_id, version, content_sha256, definition jsonb, loaded_at` | Unique `(runbook_id, version)` |

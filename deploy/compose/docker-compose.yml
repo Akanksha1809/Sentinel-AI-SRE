@@ -206,6 +206,25 @@ services:
     depends_on:
       sentinel-migrate: { condition: service_completed_successfully }
 
+  # Background jobs: evidence collection from Prometheus/Loki. No ports, no Docker access.
+  sentinel-worker:
+    <<: *hardening
+    image: sentinel/sentinel:dev
+    command: ["sentinel", "worker"]
+    read_only: true
+    mem_limit: 256m
+    labels: *loggable
+    environment:
+      SENTINEL_DB_HOST: postgres
+      SENTINEL_ENVIRONMENT: local
+      SENTINEL_PROMETHEUS_INTERNAL_URL: http://prometheus:9090
+      SENTINEL_LOKI_INTERNAL_URL: http://loki:3100
+      HEALTHCHECK_URL: http://127.0.0.1:9101/metrics
+    secrets: [sentinel_app_db_password]
+    networks: [data, obs]
+    depends_on:
+      sentinel-migrate: { condition: service_completed_successfully }
+
   # ---------------------------------------------------------------- observability
   prometheus:
     <<: *hardening

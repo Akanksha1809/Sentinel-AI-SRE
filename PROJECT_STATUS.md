@@ -3,7 +3,7 @@
 _Resumable work log. Update at the end of every work session. Only record results backed by command output._
 
 ## Current phase
-**Phase 3: Ingestion, incident lifecycle, persistence. Complete (2026-10-09).** Next: Phase 4 (evidence gathering from Prometheus, Loki and deployment history).
+**Phase 4: Evidence gathering. Complete (2026-10-09).** Next: Phase 5 (AI investigation engine: structured schemas, mock + Ollama providers, citation validation).
 
 ## Phase checklist
 | Phase | Status | Evidence |
@@ -11,8 +11,8 @@ _Resumable work log. Update at the end of every work session. Only record result
 | 1. Architecture & plan | ✅ 2026-10-09 | `docs/architecture.md`, `docs/threat-model.md`, `docs/data-model.md`, `docs/api-contracts.md`, `docs/implementation-plan.md` |
 | 2. Target system + monitoring stack | ✅ 2026-10-09 | See "Phase 2 results" below |
 | 3. Ingestion + incidents + persistence | ✅ 2026-10-09 | See "Phase 3 results" below |
-| 4. Evidence gathering | ⏳ Next | |
-| 5. AI investigation | ⏳ | |
+| 4. Evidence gathering | ✅ 2026-10-09 | See "Phase 4 results" below |
+| 5. AI investigation | ⏳ Next | |
 | 6. Runbooks, approvals, execution, verification (+ dedicated `sentinel` kind cluster) | ⏳ | |
 | 7. UI, reports, postmortems | ⏳ | |
 | 8. E2E, CI hardening, docs, demos | ⏳ (basic CI added early in Phase 2) | |
@@ -31,7 +31,25 @@ _Resumable work log. Update at the end of every work session. Only record result
 - Compose stack: Prometheus (SLI recording rules, burn-rate and saturation alerts), Alertmanager (webhook to Sentinel with a secret-file bearer token), Loki + Alloy, Grafana (generated dashboard), Postgres (ready for Phase 3), two socket proxies.
 - Policy tests for Compose security invariants; promtool rule unit tests; basic GitHub Actions CI.
 
-## What exists (Phase 3)
+## What exists (Phase 4)
+- `sentinel.evidence`: Prometheus and Loki clients (timeouts, bounded retries for 5xx/transport only, 5 MB cap, series caps); code-owned query templates; log sanitiser (redaction + injection flagging); step-change and change-correlation analysis; collector with per-query isolation (failures become `gap` items).
+- Migration 0002: `evidence_collections`, `evidence_items` (INSERT/SELECT only for the app role).
+- `sentinel worker` (Compose service `sentinel-worker`): runs `evidence.collect` jobs; queued automatically (deduplicated, 10s delay) and via `POST /incidents/{id}/evidence/refresh`. Metrics on :9101; `SentinelWorkerDown` and `SentinelJobsFailing` alerts.
+- `GET /incidents/{id}/evidence`: latest collection, with evidence refs that Phase 5 citations will use.
+
+## Phase 4 results (2026-10-09)
+- `make lint typecheck`: clean (mypy --strict, 46 files). Unit + policy: **233 passed**. Integration + API (Postgres 18.6): **71 passed**. bandit clean; pip-audit: no known vulnerabilities; promtool/amtool OK.
+- Problems found and fixed while verifying against live data:
+  - Loki `| json` filters timed out over 2h windows, so queries now select on the indexed `level` label.
+  - The step magnitude was diluted by post-rollback recovery, so detection now uses data only up to 2 minutes after the first alert.
+  - Noisy by-version steps: raised the minimum delta.
+  - **Correlation bug:** a version with 0% of errors was treated as "unknown", which inflated a rollback's score to 0.71. Zero now counts against the change, and rollbacks are not cause candidates.
+  - **Security bug:** `re.match` with `$` accepted trailing newlines in validated names; switched to `fullmatch` everywhere, with regressions added.
+  - A non-deterministic "latest collection" on timestamp ties; added an ID tie-breaker.
+  - An `assert` in production code replaced.
+- **Exit criterion (live):** deploy 1.1.0 (PR-143) at 12:44:27 → INC-0002 opened at 12:46:00 → worker collected 15 items automatically at 12:46:17 (status complete, 0 gaps). Results: onset 12:45:12; error ratio 0.1% → 22.3%; 199 `TypeError` lines, all on 1.1.0; 100% of 5xx on 1.1.0; **top change PR-143, score 0.97**, ahead of the earlier, identical PR-142 deploy because of time decay.
+
+## What existed after Phase 3
 - `src/sentinel`: FastAPI API (`sentinel api`), config with file-based secrets, DI container, structlog JSON logs with correlation IDs, Prometheus self-metrics, RFC 9457 errors.
 - Postgres schema (Alembic 0001): incidents, alerts, timeline events, deployments, principals, jobs, append-only hash-chained audit. Roles `sentinel_migrator` (DDL) and `sentinel_app` (DML only; INSERT/SELECT on audit).
 - Ingestion: Alertmanager v4 webhook (bearer token, 256 KB streaming cap, untrusted-content sanitisation) → dedupe `(fingerprint, startsAt)` → grouping per `environment/service` (advisory lock) → reopen window → severity escalation. All-alerts-resolved does **not** resolve the incident.

@@ -70,3 +70,5 @@ class EventKind(StrEnum):
     ALERT_REFIRED = "alert.refired"
     ALL_ALERTS_RESOLVED = "incident.all_alerts_resolved"
     NOTE_ADDED = "note.added"
+    EVIDENCE_REQUESTED = "evidence.requested"
+    EVIDENCE_COLLECTED = "evidence.collected"

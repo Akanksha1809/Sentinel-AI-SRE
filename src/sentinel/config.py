@@ -48,6 +48,13 @@ class Settings(BaseSettings):
 
     # Links rendered in API responses / UI.
     grafana_url: str = "http://localhost:3000"
+    # Internal endpoints the worker queries (distinct from the user-facing links).
+    prometheus_internal_url: str = "http://prometheus:9090"
+    loki_internal_url: str = "http://loki:3100"
+    loki_timeout_s: float = Field(default=20.0, gt=0, le=60)
+    # Short delay before collecting, so the newest log lines have been shipped.
+    evidence_delay_s: int = Field(default=10, ge=0, le=300)
+    worker_metrics_port: int = Field(default=9101, ge=1024, le=65535)
     prometheus_url: str = "http://localhost:9090"
 
     # Secrets (loaded by `load_settings`; may be injected directly in tests).

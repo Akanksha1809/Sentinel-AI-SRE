@@ -40,13 +40,13 @@ def clean_text(value: Any, limit: int) -> str:
 def clean_mapping(raw: dict[str, Any], limit: int) -> dict[str, str]:
     out: dict[str, str] = {}
     for key, value in list(raw.items())[:MAX_LABELS]:
-        if isinstance(key, str) and _LABEL_KEY.match(key):
+        if isinstance(key, str) and _LABEL_KEY.fullmatch(key):
             out[key] = clean_text(value, limit)
     return out
 
 
 def safe_name(value: str | None, default: str = "unknown") -> str:
-    return value if value and _SAFE_NAME.match(value) else default
+    return value if value and _SAFE_NAME.fullmatch(value) else default
 
 
 class AMAlert(BaseModel):
