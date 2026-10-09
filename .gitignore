@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+dist/
+build/
+
+# Secrets and local config
+.env
+secrets/*
+!secrets/.gitkeep
+*.pem
+*.key
+
+# Runtime artefacts
+*.log
+.DS_Store
+demo-output/
