@@ -57,4 +57,17 @@ class Metrics:
             registry=r,
             buckets=(0.5, 1, 2, 5, 10, 20, 30, 60),
         )
+        self.investigations = Counter(
+            "sentinel_investigations_total",
+            "Investigations by provider and outcome.",
+            ["provider", "outcome"],
+            registry=r,
+        )
+        self.investigation_seconds = Histogram(
+            "sentinel_investigation_seconds",
+            "Investigation latency (provider call).",
+            ["provider"],
+            registry=r,
+            buckets=(0.01, 0.1, 1, 5, 15, 30, 60, 120, 240, 300),
+        )
         self.build = Gauge("sentinel_build_info", "Build info.", ["version"], registry=r)

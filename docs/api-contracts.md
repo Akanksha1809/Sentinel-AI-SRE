@@ -38,8 +38,9 @@ FastAPI generates the OpenAPI spec at `/api/v1/openapi.json`. The contract tests
 
 | Method | Path | Role | Notes |
 |---|---|---|---|
-| POST | `/incidents/{id}/investigations` | responder | `{provider?: "mock"\|"ollama"}` → `202 {investigation_id}` |
-| GET | `/investigations/{id}` | viewer | `Investigation` |
+| POST | `/incidents/{id}/investigations` | responder | `{provider?: "mock"\|"ollama"}` → `202 {queued, job_id, provider, detail}`. 409 if there's no evidence yet or the provider is disabled; deduplicated per incident; audited |
+| GET | `/incidents/{id}/investigations` | viewer | `Investigation[]`, newest first |
+| GET | `/investigations/{id}` | viewer | `{status, label, provider, model, is_mock, summary, hypotheses[{kind, statement, confidence, cited_evidence, uncited, generated: true}], recommended_actions[] (validated, with runbook version and sha256, requires_approval), rejected_actions[], dropped_citations[], next_investigative_steps, data_gaps, error}` |
 
 `InvestigationReport` (the schema the LLM must satisfy; it is also passed to Ollama `format`):
 
@@ -60,7 +61,7 @@ Server-side additions, which the model cannot set: `provider`, `model`, `generat
 
 | Method | Path | Role | Notes |
 |---|---|---|---|
-| GET | `/runbooks` | viewer | Catalogue with id, version, sha256, parameter JSON schema, approval policy |
+| GET | `/runbooks` | viewer | Catalogue: id, version, sha256, typed parameters, approval, verification checks |
 | GET | `/runbooks/{id}` | viewer | Full definition |
 | POST | `/incidents/{id}/actions` | responder | `{runbook_id, parameters, dry_run?}` → `201 ActionRequest` (status from the policy). `422` if parameters fail the schema |
 | GET | `/actions/{id}` | viewer | `ActionRequest` + approvals + executions + verifications |

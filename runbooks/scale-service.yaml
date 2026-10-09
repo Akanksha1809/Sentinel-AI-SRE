@@ -1,0 +1,27 @@
+id: scale-service
+version: 1
+title: Scale a service within its allowed replica bounds
+description: >-
+  Change the number of replicas within the catalogue bounds. Use for saturation from
+  increased load (latency, CPU). It does not fix errors caused by bad code or config.
+action: scale
+disruptive: false
+approval: required
+applies_to_alerts:
+  - ShopApiHighLatency
+  - ShopApiHighCPU
+parameters:
+  service:
+    type: service
+    description: Service to scale (must be the incident's service).
+  replicas:
+    type: replicas
+    description: Desired replica count (1-3, enforced again by the actuator).
+verification:
+  settle_s: 20
+  window_s: 90
+  interval_s: 15
+  consecutive: 4
+  checks:
+    - { signal: latency_p95, op: lt, value: 0.3 }
+    - { signal: replicas_ready_ratio, op: gte, value: 1.0 }

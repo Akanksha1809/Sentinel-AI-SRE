@@ -1,0 +1,35 @@
+id: rollback-deployment
+version: 1
+title: Roll back a service to its previous release
+description: >-
+  Redeploy the last known-good version (and config revision) of a service through the
+  actuator. Use when a recent deployment or config change correlates with the onset of
+  errors, crashes or latency.
+action: rollback
+disruptive: true
+approval: required
+applies_to_alerts:
+  - ShopApiHighErrorBurnRate
+  - ShopApiCrashLooping
+  - ShopApiDown
+  - ShopApiHighLatency
+parameters:
+  service:
+    type: service
+    description: Service to roll back (must be the incident's service).
+  target_version:
+    type: version
+    description: Release to roll back to; must exist in the release catalogue.
+  target_config_revision:
+    type: config_revision
+    required: false
+    description: Config revision to restore; defaults to the current revision.
+verification:
+  settle_s: 20
+  window_s: 90
+  interval_s: 15
+  consecutive: 4
+  checks:
+    - { signal: error_ratio, op: lt, value: 0.01 }
+    - { signal: replicas_ready_ratio, op: gte, value: 1.0 }
+    - { signal: restarts_in_window, op: eq, value: 0 }

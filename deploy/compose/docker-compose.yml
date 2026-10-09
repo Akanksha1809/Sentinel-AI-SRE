@@ -198,6 +198,14 @@ services:
       SENTINEL_ENVIRONMENT: local
       SENTINEL_GRAFANA_URL: http://localhost:3000
       SENTINEL_PROMETHEUS_URL: http://localhost:9090
+      # Investigation provider: mock (default, no LLM needed) or ollama (host-local LLM,
+      # reached via the Docker host alias; Ollama stays bound to 127.0.0.1 on the host).
+      SENTINEL_INVESTIGATION_PROVIDER: ${SENTINEL_INVESTIGATION_PROVIDER:-mock}
+      SENTINEL_OLLAMA_ENABLED: ${SENTINEL_OLLAMA_ENABLED:-false}
+      SENTINEL_OLLAMA_URL: ${SENTINEL_OLLAMA_URL:-http://host.docker.internal:11434}
+      SENTINEL_OLLAMA_MODEL: ${SENTINEL_OLLAMA_MODEL:-qwen2.5-coder:7b}
+      SENTINEL_OLLAMA_TIMEOUT_S: ${SENTINEL_OLLAMA_TIMEOUT_S:-240}
+      SENTINEL_INVESTIGATION_TIMEOUT_S: ${SENTINEL_INVESTIGATION_TIMEOUT_S:-300}
       HEALTHCHECK_URL: http://127.0.0.1:8080/healthz
     secrets: [sentinel_app_db_password, alertmanager_webhook_token, deployer_token,
               sentinel_admin_token]
@@ -219,6 +227,14 @@ services:
       SENTINEL_ENVIRONMENT: local
       SENTINEL_PROMETHEUS_INTERNAL_URL: http://prometheus:9090
       SENTINEL_LOKI_INTERNAL_URL: http://loki:3100
+      # Investigation provider: mock (default, no LLM needed) or ollama (host-local LLM,
+      # reached via the Docker host alias; Ollama stays bound to 127.0.0.1 on the host).
+      SENTINEL_INVESTIGATION_PROVIDER: ${SENTINEL_INVESTIGATION_PROVIDER:-mock}
+      SENTINEL_OLLAMA_ENABLED: ${SENTINEL_OLLAMA_ENABLED:-false}
+      SENTINEL_OLLAMA_URL: ${SENTINEL_OLLAMA_URL:-http://host.docker.internal:11434}
+      SENTINEL_OLLAMA_MODEL: ${SENTINEL_OLLAMA_MODEL:-qwen2.5-coder:7b}
+      SENTINEL_OLLAMA_TIMEOUT_S: ${SENTINEL_OLLAMA_TIMEOUT_S:-240}
+      SENTINEL_INVESTIGATION_TIMEOUT_S: ${SENTINEL_INVESTIGATION_TIMEOUT_S:-300}
       HEALTHCHECK_URL: http://127.0.0.1:9101/metrics
     secrets: [sentinel_app_db_password]
     networks: [data, obs]

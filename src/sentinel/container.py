@@ -18,6 +18,7 @@ from sentinel.incidents.service import IncidentService
 from sentinel.jobs.queue import JobQueue
 from sentinel.observability.metrics import Metrics
 from sentinel.persistence.db import make_engine, make_sessionmaker, migration_head
+from sentinel.remediation.runbooks import RunbookCatalog
 
 
 @dataclass
@@ -31,6 +32,7 @@ class Container:
     incidents: IncidentService
     deployments: DeploymentService
     jobs: JobQueue
+    catalog: RunbookCatalog
     expected_migration: str | None = None
 
     @classmethod
@@ -57,5 +59,6 @@ class Container:
             ),
             deployments=DeploymentService(clock, audit, settings.environment),
             jobs=jobs,
+            catalog=RunbookCatalog.load(settings.runbooks_dir),
             expected_migration=migration_head(),
         )

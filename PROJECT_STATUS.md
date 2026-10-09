@@ -3,7 +3,7 @@
 _Resumable work log. Update at the end of every work session. Only record results backed by command output._
 
 ## Current phase
-**Phase 4: Evidence gathering. Complete (2026-10-09).** Next: Phase 5 (AI investigation engine: structured schemas, mock + Ollama providers, citation validation).
+**Phase 5: AI investigation. Complete (2026-10-09).** Next: Phase 6 (policy, approvals, restricted execution, recovery verification; dedicated `sentinel` kind cluster).
 
 ## Phase checklist
 | Phase | Status | Evidence |
@@ -12,8 +12,8 @@ _Resumable work log. Update at the end of every work session. Only record result
 | 2. Target system + monitoring stack | ✅ 2026-10-09 | See "Phase 2 results" below |
 | 3. Ingestion + incidents + persistence | ✅ 2026-10-09 | See "Phase 3 results" below |
 | 4. Evidence gathering | ✅ 2026-10-09 | See "Phase 4 results" below |
-| 5. AI investigation | ⏳ Next | |
-| 6. Runbooks, approvals, execution, verification (+ dedicated `sentinel` kind cluster) | ⏳ | |
+| 5. AI investigation | ✅ 2026-10-09 | See "Phase 5 results" below |
+| 6. Runbooks, approvals, execution, verification (+ dedicated `sentinel` kind cluster) | ⏳ Next (runbook catalogue already done in Phase 5) | |
 | 7. UI, reports, postmortems | ⏳ | |
 | 8. E2E, CI hardening, docs, demos | ⏳ (basic CI added early in Phase 2) | |
 
@@ -31,7 +31,29 @@ _Resumable work log. Update at the end of every work session. Only record result
 - Compose stack: Prometheus (SLI recording rules, burn-rate and saturation alerts), Alertmanager (webhook to Sentinel with a secret-file bearer token), Loki + Alloy, Grafana (generated dashboard), Postgres (ready for Phase 3), two socket proxies.
 - Policy tests for Compose security invariants; promtool rule unit tests; basic GitHub Actions CI.
 
-## What exists (Phase 4)
+## What exists (Phase 5)
+- `runbooks/*.yaml` + `sentinel.remediation.runbooks`: schema-validated, sha256-hashed catalogue (rollback, restart, scale) with typed, bounded parameters and named verification checks (pulled forward from Phase 6).
+- `sentinel.investigation`: report schema (bounded); versioned prompt (evidence in one escaped, untrusted-data block); providers `mock` (default, labelled MOCK) and `ollama` (per-request constrained decoding); validator (citations, uncited cap, catalogue/parameter/service checks, recorded rejections, citation normalisation); service (record before call, timeout, failure recorded, never substitute mock).
+- Migration 0003: `investigations`, `hypotheses` (`generated CHECK true`; insert-only).
+- Auto-investigation after an incident's first evidence, a reopen, or a *new kind of alert*. **Focused evidence:** onset and correlation are anchored on the alert that triggered the collection.
+- API: `GET /runbooks[/{id}]`, `POST/GET /incidents/{id}/investigations`, `GET /investigations/{id}` (label, `generated`, `is_mock`, accepted/rejected actions, dropped/normalised citations).
+- Compose: `SENTINEL_INVESTIGATION_PROVIDER` (default `mock`), `SENTINEL_OLLAMA_ENABLED`/`_URL` (`host.docker.internal`)/`_MODEL`/`_TIMEOUT_S`.
+
+## Phase 5 results (2026-10-09)
+- Lint and strict mypy clean (76 files); unit + policy **290 passed**; integration + API **77 passed**; bandit clean; pip-audit clean; promtool/amtool OK.
+- **Live, fully automatic (mock), scenario C:** bad config r2 (CHG-78) at 13:53:24 → INC-0006 **reopened** at 13:54:11 with evidence focused on `ShopApiDown` → evidence at 13:54:28 (onset 13:53:37; 69x `POOL_SIZE` validation failures, all r2; CHG-78 score 0.98 vs CHG-77 0.38) → MOCK investigation recommends `rollback-deployment` to config `r1` (requires approval) → incident `investigating`.
+- **Live Ollama (`qwen2.5-coder:7b`, through the stack, container → `host.docker.internal` → host loopback):**
+  - Run 1 (507s): identified CHG-78, but cited `ref:change.deployments` (invalid form), so its citations were dropped, it was capped at 0.3, flagged uncited, and recommended no action.
+  - Fix: per-request enum-constrained decoding plus citation normalisation.
+  - Run 2 (609s): **correct root cause (invalid POOL_SIZE in config r2 / CHG-78), valid citations, confidence 0.95, and recommended `rollback-deployment` to 1.0.0/r1, which passed validation.** Remaining weaknesses: an empty action rationale, and the summary echoes the incident's stale latency title.
+- **Performance on this host:** an 8 GB M1 shared with Colima (8 GiB VM) and another project's containers. 7B runs at about 9 prompt / 5 generated tokens/s (normal is about 100+/15–20), so an investigation takes about 10 minutes. The memory starvation degraded the stack and Sentinel **correctly opened incidents** for it (INC-0003..0005: scrape targets down, latency). The mock stays the default; see docs/troubleshooting.md for options.
+- Problems found and fixed:
+  - **Single-onset flaw:** a config change made 7 minutes after an incident's first alert scored 0 because it came "after onset". Collections now focus on new kinds of alert and on reopening alerts, with regression tests.
+  - Hardened during design (not a live finding): a `</evidence>` string in log text could have closed the prompt's data block, so `<` and `>` are escaped (with a test).
+  - Citation-format loss in real model output (see above).
+  - A fixture confidence value that I had made up during drafting was replaced with the persisted value, noted in its provenance.
+
+## What existed after Phase 4
 - `sentinel.evidence`: Prometheus and Loki clients (timeouts, bounded retries for 5xx/transport only, 5 MB cap, series caps); code-owned query templates; log sanitiser (redaction + injection flagging); step-change and change-correlation analysis; collector with per-query isolation (failures become `gap` items).
 - Migration 0002: `evidence_collections`, `evidence_items` (INSERT/SELECT only for the app role).
 - `sentinel worker` (Compose service `sentinel-worker`): runs `evidence.collect` jobs; queued automatically (deduplicated, 10s delay) and via `POST /incidents/{id}/evidence/refresh`. Metrics on :9101; `SentinelWorkerDown` and `SentinelJobsFailing` alerts.

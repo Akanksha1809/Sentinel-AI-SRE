@@ -14,6 +14,7 @@ import subprocess
 from collections.abc import AsyncIterator, Callable, Iterator
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -22,6 +23,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 
 PG_IMAGE = "postgres:18.6"
+RUNBOOKS_DIR = Path(__file__).resolve().parents[1] / "runbooks"
 ADMIN_PW = "admin_test_password_123"
 MIGRATOR_PW = "migrator_test_password_123"
 APP_PW = "app_test_password_12345"
@@ -90,8 +92,8 @@ def pg() -> Iterator[PgInfo]:
 
 
 _TABLES = (
-    "evidence_items, evidence_collections, alerts, incident_events, incidents, deployments, "
-    "principals, jobs, audit_events"
+    "hypotheses, investigations, evidence_items, evidence_collections, alerts, "
+    "incident_events, incidents, deployments, principals, jobs, audit_events"
 )
 
 
@@ -126,6 +128,7 @@ def settings(clean_db: PgInfo) -> Any:
         deployer_token=SecretStr(DEPLOYER_TOKEN),
         bootstrap_admin_token=SecretStr(ADMIN_TOKEN),
         reopen_window_s=600,
+        runbooks_dir=RUNBOOKS_DIR,
     )
 
 

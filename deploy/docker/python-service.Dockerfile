@@ -28,6 +28,7 @@ RUN uv sync --frozen --no-dev --package "${PACKAGE}" --no-editable
 FROM python:3.12.15-slim
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 COPY --from=build /opt/venv /opt/venv
+COPY runbooks/ /opt/sentinel/runbooks/
 ARG MODULE
 ARG RELEASE_DEFECT=none
 ARG APP_VERSION=0.0.0

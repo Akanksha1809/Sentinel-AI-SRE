@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from sentinel import __version__
 from sentinel.api import errors
-from sentinel.api.routes import admin, incidents, webhooks
+from sentinel.api.routes import admin, incidents, investigations, webhooks
 from sentinel.container import Container
 from sentinel.domain.enums import Role
 from sentinel.observability.middleware import ObservabilityMiddleware
@@ -64,6 +64,13 @@ def create_app(container: Container, *, run_bootstrap: bool = True) -> FastAPI:
     container.metrics.build.labels(__version__).set(1)
     errors.install(app)
     app.add_middleware(ObservabilityMiddleware, metrics=container.metrics)
-    for router in (admin.health, webhooks.router, incidents.router, admin.deployments, admin.audit):
+    for router in (
+        admin.health,
+        webhooks.router,
+        incidents.router,
+        admin.deployments,
+        admin.audit,
+        investigations.router,
+    ):
         app.include_router(router)
     return app

@@ -86,6 +86,22 @@ class IncidentService:
             delay=self._evidence_delay if delay is None else delay,
         )
 
+    async def _is_new_alertname(
+        self, session: AsyncSession, incident_id: uuid.UUID, alertname: str, exclude: uuid.UUID
+    ) -> bool:
+        existing = (
+            await session.execute(
+                select(func.count())
+                .select_from(Alert)
+                .where(
+                    Alert.incident_id == incident_id,
+                    Alert.alertname == alertname,
+                    Alert.id != exclude,
+                )
+            )
+        ).scalar_one()
+        return existing == 0
+
     async def record_event(
         self,
         session: AsyncSession,
@@ -236,13 +252,15 @@ class IncidentService:
                     },
                 )
                 result.touch(incident.id, outcome)
-                await self.request_evidence(
-                    session,
-                    incident.id,
-                    "incident.created"
-                    if outcome == "created"
-                    else f"alert.attached:{na.alertname}",
-                )
+                if outcome == "created":
+                    trigger = "incident.created"
+                elif outcome == "reopened":  # refocus on the alert that reopened it
+                    trigger = f"incident.reopened:{na.alertname}"
+                elif await self._is_new_alertname(session, incident.id, na.alertname, alert.id):
+                    trigger = f"alert.new:{na.alertname}"  # a different problem: refocus
+                else:
+                    trigger = f"alert.attached:{na.alertname}"
+                await self.request_evidence(session, incident.id, trigger)
             elif previous_status == AlertStatus.RESOLVED.value:
                 self._event(
                     session,

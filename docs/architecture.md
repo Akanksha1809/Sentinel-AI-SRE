@@ -369,3 +369,19 @@ Design points:
 - Log text is sanitised: control characters stripped, secrets and PII redacted, injection-like text flagged and kept as data.
 - Onset and step detection use only data up to 2 minutes after the first alert, so a later recovery cannot dilute the change.
 - Measured timings (live, 2026-10-09): collection takes 2–3 seconds; evidence is available about 15 seconds after the incident opens.
+
+---
+
+## 12. AI investigation (Phase 5, as built)
+
+```
+evidence collection ──(same transaction)──► job investigation.run ──► provider ──► validate ──► persist
+   (first, reopened, or new-alert collections)   mock | ollama        (schema, citations,    investigations
+                                                                        runbooks, params)      + hypotheses
+```
+- **Providers.** `mock` (default) applies deterministic rules over the same evidence views, and its output is labelled `[MOCK]` and `is_mock=true`. `ollama` calls `/api/chat` with a *per-request* JSON schema as `format` (constrained decoding: `cited_evidence` is an enum of this incident's evidence refs and `runbook_id` an enum of the catalogue), `temperature 0`, a fixed seed, `num_ctx 4096` and `keep_alive 2m`. The raw output is stored with each investigation. A failed LLM run is recorded as failed; mock output is **never** substituted.
+- **Prompt.** A versioned system prompt states the rules. All evidence goes in one JSON block declared as untrusted data, with `<` and `>` escaped so log text cannot close the block. The model sees compact evidence views, not raw series. The prompt is about 2,700 tokens for a typical incident.
+- **Validation (the real control).** Pydantic schema with bounded sizes. Invented citations are dropped, and uncited hypotheses have confidence capped at 0.3. Actions are accepted only for catalogue runbooks whose typed and bounded parameters pass and whose target is the incident's service; everything rejected is recorded with a reason. Accepted actions carry the runbook version and sha256 and are *recommendations* that need approval (Phase 6).
+- **Focus.** When a new kind of alert joins, or an alert reopens an incident, evidence is anchored on that alert (onset, step detection, change correlation), and the incident is re-investigated. One service can have two distinct problems in one incident.
+- **Separation of observation and hypothesis.** This is in the schema (`evidence_items` vs `hypotheses.generated CHECK true`), the API (`label`, `generated`, `is_mock`) and the timeline (actor `ai:MOCK` / `ai:ollama:<model>`, text prefixed "[AI hypothesis …]").
+- **Networking.** Ollama runs on the host bound to 127.0.0.1. Containers reach it through `host.docker.internal` (Colima forwards it to the host loopback, verified), so Ollama is never exposed to the LAN.

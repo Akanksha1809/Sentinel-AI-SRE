@@ -292,3 +292,61 @@ class EvidenceItem(Base):
         UniqueConstraint("collection_id", "ref", name="uq_evidence_items_collection_ref"),
         CheckConstraint("kind IN ('metric','log','change','derived','gap')", name="kind"),
     )
+
+
+class Investigation(Base):
+    """One AI (or mock) investigation run. Its content is hypotheses, never observations."""
+
+    __tablename__ = "investigations"
+
+    id: Mapped[uuid.UUID] = _pk()
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="RESTRICT"), index=True
+    )
+    collection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("evidence_collections.id", ondelete="RESTRICT")
+    )
+    status: Mapped[str] = mapped_column(String(10))  # running | succeeded | failed
+    provider: Mapped[str] = mapped_column(String(20))
+    model: Mapped[str] = mapped_column(String(80))
+    is_mock: Mapped[bool]
+    prompt_version: Mapped[str] = mapped_column(String(40))
+    input_hash: Mapped[str | None] = mapped_column(String(64))
+    requested_by: Mapped[str] = mapped_column(String(120))
+    started_at: Mapped[datetime]
+    finished_at: Mapped[datetime | None]
+    latency_ms: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    report: Mapped[Json | None]
+    validation: Mapped[Json | None]
+
+    hypotheses: Mapped[list[HypothesisRow]] = relationship(
+        back_populates="investigation", order_by="HypothesisRow.rank"
+    )
+
+    __table_args__ = (CheckConstraint("status IN ('running','succeeded','failed')", name="status"),)
+
+
+class HypothesisRow(Base):
+    """An AI-generated hypothesis. `generated` is always true and exists for explicitness."""
+
+    __tablename__ = "hypotheses"
+
+    id: Mapped[uuid.UUID] = _pk()
+    investigation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("investigations.id", ondelete="RESTRICT"), index=True
+    )
+    rank: Mapped[int] = mapped_column(Integer)  # 0 = suspected root cause
+    statement: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float]
+    cited_evidence: Mapped[list[str]] = mapped_column(ARRAY(String(64)))
+    why_less_likely: Mapped[str | None] = mapped_column(Text)
+    uncited: Mapped[bool] = mapped_column(server_default=text("false"))
+    generated: Mapped[bool] = mapped_column(server_default=text("true"))
+
+    investigation: Mapped[Investigation] = relationship(back_populates="hypotheses")
+
+    __table_args__ = (
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence"),
+        CheckConstraint("generated", name="generated"),
+    )

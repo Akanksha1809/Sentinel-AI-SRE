@@ -83,3 +83,10 @@ The privileged container the first probe created (never started) was removed imm
 - **T7 (query injection):** only code-owned templates run. Hostile service names (`x"} or vector(1)…`, backslashes, newlines) are refused before any query. **A real bug was found and fixed:** patterns anchored with `$` and checked with `re.match` accepted a trailing newline. Every validator now uses `fullmatch`, with regression tests at each untrusted-input entry point (ingestion, templates, docker-guard).
 - **T13 (secrets in evidence):** bearer/basic credentials, JWTs, AWS keys, Sentinel tokens, `password=`-style pairs, connection-string passwords and emails are redacted before storage (`tests/unit/test_evidence_pure.py`).
 - **Evidence integrity:** the app role cannot UPDATE or DELETE evidence (`tests/integration/test_evidence_flow.py`).
+
+### 2026-10-09: Phase 5 controls verified by tests
+- **T1 (prompt injection):** the model has no tools; output is data. Log text cannot close the `<evidence>` block (`<`, `>` escaped). Injected text in evidence does not change the mock's recommendation. A simulated *compromised* model output (off-catalogue `exec`, another service, a malformed version) has every action rejected and recorded (`tests/unit/test_investigation.py::TestCompromisedModelOutput`).
+- **T2 (hallucination):** invented evidence refs are dropped; uncited hypotheses have confidence capped at 0.3 and are flagged; a hallucinated "database failover" with an off-catalogue runbook is contained end to end (`tests/integration/test_investigation_flow.py`).
+- **T3 (malformed output):** schema violations fail the run with a recorded reason; invalid JSON gets one bounded retry; timeouts are recorded as failures; mock output is never substituted for a failed LLM run.
+- **T6 (parameter tampering):** runbook parameters are typed and bounded (`replicas` 1–3; versions and revisions by pattern; booleans rejected as ints); unknown parameters are rejected; the service is pinned to the incident.
+- **T17 (Ollama exposure):** verified live that Ollama stays on 127.0.0.1 and containers reach it through `host.docker.internal`.

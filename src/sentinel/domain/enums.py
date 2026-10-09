@@ -72,3 +72,6 @@ class EventKind(StrEnum):
     NOTE_ADDED = "note.added"
     EVIDENCE_REQUESTED = "evidence.requested"
     EVIDENCE_COLLECTED = "evidence.collected"
+    INVESTIGATION_REQUESTED = "investigation.requested"
+    INVESTIGATION_COMPLETED = "investigation.completed"
+    INVESTIGATION_FAILED = "investigation.failed"

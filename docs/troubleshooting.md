@@ -61,3 +61,21 @@ The worker's Loki timeout is `SENTINEL_LOKI_TIMEOUT_S` (default 20s).
 Check `make logs SERVICE=sentinel-worker` and the `sentinel_jobs` metric. Evidence is
 collected about 10 seconds after an incident opens. `POST /api/v1/incidents/<id>/evidence/refresh`
 (responder) queues another collection.
+
+## Ollama investigations are extremely slow or time out (8 GB Macs)
+Measured on an Apple M1 with 8 GB of unified memory, running Colima (8 GiB VM) and another
+project's containers at the same time: `qwen2.5-coder:7b` loaded in 79s, processed the prompt
+at 9 tokens/s and generated at 5 tokens/s (typical for this chip is about 100+ and 15-20).
+A ~2,700-token investigation therefore takes about 10 minutes, and the memory starvation also
+degraded the stack (Sentinel correctly opened incidents for it). Options:
+- Use the default `mock` provider (`SENTINEL_INVESTIGATION_PROVIDER=mock`).
+- Free memory: stop other containers, or give Colima less memory (`colima stop && colima start --memory 4`).
+- Use a smaller model, e.g. a 3B instruct model (`SENTINEL_OLLAMA_MODEL=...`).
+- For a one-off run, raise `SENTINEL_OLLAMA_TIMEOUT_S` / `SENTINEL_INVESTIGATION_TIMEOUT_S` (max 900).
+
+## Containers can't reach Ollama
+Ollama should stay bound to `127.0.0.1` (don't set `OLLAMA_HOST=0.0.0.0`; that exposes it to
+your network). On Colima and Docker Desktop, containers reach the host loopback via
+`host.docker.internal`. Check with:
+`docker exec sentinel-sentinel-worker-1 python -c "import urllib.request;print(urllib.request.urlopen('http://host.docker.internal:11434/api/tags').read()[:100])"`.
+On a plain Linux Docker Engine, set `SENTINEL_OLLAMA_URL` to an address Ollama listens on.

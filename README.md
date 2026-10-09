@@ -2,7 +2,7 @@
 
 Sentinel detects production-like incidents and correlates metrics and logs with recent changes. It investigates likely root causes with an LLM that is grounded in evidence and has **no tools**, proposes remediation only from an allowlisted runbook catalogue, executes approved actions through a least-privilege actuator, and verifies recovery against measured health signals.
 
-> **Status: Phase 4 of 8 complete.** Real alerts become audited incidents, and a worker automatically gathers evidence (metrics, sanitised logs, change history, change-correlation scores) within seconds. AI investigation starts in Phase 5. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **Status: Phase 5 of 8 complete.** Alerts become audited incidents; a worker gathers evidence within seconds and runs an investigation that proposes cited hypotheses and *recommends* allowlisted runbooks (the mock by default; a local Ollama model optionally). Approvals and execution start in Phase 6. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## What runs today
 | Component | Role |
@@ -13,7 +13,7 @@ Sentinel detects production-like incidents and correlates metrics and logs with 
 | **Prometheus / Alertmanager** | SLIs, SLO burn-rate alerts, saturation and crash-loop alerts |
 | **Loki / Alloy / Grafana** | Centralised logs (labelled by version and config revision) and a provisioned service dashboard |
 | **Sentinel API** | Alertmanager webhook ingestion, incident lifecycle, deployment history, RBAC, hash-chained audit log (http://127.0.0.1:8080/api/docs) |
-| **Sentinel worker** | Evidence collection from Prometheus, Loki and change history, with step-change and change-correlation analysis |
+| **Sentinel worker** | Evidence collection (metrics, sanitised logs, change correlation) and investigations: a deterministic MOCK provider by default, or a local Ollama model; output is schema-constrained, citation-checked, and limited to catalogue runbooks |
 
 ## Quick start (macOS/Linux, Docker + uv)
 ```bash

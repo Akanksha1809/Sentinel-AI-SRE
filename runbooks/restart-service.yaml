@@ -1,0 +1,31 @@
+id: restart-service
+version: 1
+title: Rolling restart of a service
+description: >-
+  Restart replicas one at a time. Mitigates state-related failures such as memory growth
+  or leaked resources. It does not fix a bad release or bad config (the problem returns),
+  so prefer rollback when a change correlates with onset.
+action: restart
+disruptive: true
+approval: required
+applies_to_alerts:
+  - ShopApiMemoryPressure
+  - ShopApiHighCPU
+  - ShopApiHighLatency
+parameters:
+  service:
+    type: service
+    description: Service to restart (must be the incident's service).
+  replica:
+    type: replica
+    required: false
+    description: Restart only this replica number; omit for a rolling restart of all.
+verification:
+  settle_s: 20
+  window_s: 60
+  interval_s: 15
+  consecutive: 3
+  checks:
+    - { signal: memory_ratio, op: lt, value: 0.5 }
+    - { signal: error_ratio, op: lt, value: 0.01 }
+    - { signal: replicas_ready_ratio, op: gte, value: 1.0 }

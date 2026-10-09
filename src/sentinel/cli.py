@@ -51,6 +51,13 @@ def _cmd_worker(_: argparse.Namespace) -> int:
     from sentinel.evidence.clients import LokiClient, PrometheusClient
     from sentinel.evidence.collector import EvidenceCollector
     from sentinel.evidence.service import JOB_KIND, EvidenceService
+    from sentinel.investigation.providers import (
+        InvestigationProvider,
+        MockProvider,
+        OllamaProvider,
+    )
+    from sentinel.investigation.service import JOB_KIND as INVESTIGATION_JOB
+    from sentinel.investigation.service import InvestigationService
     from sentinel.jobs.worker import Worker
     from sentinel.observability.logging import configure_logging
 
@@ -69,8 +76,43 @@ def _cmd_worker(_: argparse.Namespace) -> int:
             container.incidents,
             EvidenceCollector(prometheus, loki),
             container.metrics,
+            jobs=container.jobs,
+            auto_investigate_with=settings.investigation_provider
+            if settings.auto_investigate
+            else None,
         )
-        worker = Worker(container.sessions, container.jobs, {JOB_KIND: evidence.handle_job})
+        providers: dict[str, InvestigationProvider] = {"mock": MockProvider()}
+        ollama: OllamaProvider | None = None
+        if settings.ollama_enabled:
+            ollama = OllamaProvider(
+                settings.ollama_url,
+                settings.ollama_model,
+                timeout_s=settings.ollama_timeout_s,
+                num_ctx=settings.ollama_num_ctx,
+            )
+            providers["ollama"] = ollama
+        investigations = InvestigationService(
+            container.sessions,
+            container.clock,
+            container.incidents,
+            container.audit,
+            container.catalog,
+            providers,
+            container.metrics,
+            timeout_s=settings.investigation_timeout_s,
+        )
+        worker = Worker(
+            container.sessions,
+            container.jobs,
+            {JOB_KIND: evidence.handle_job, INVESTIGATION_JOB: investigations.handle_job},
+            job_timeout_s=settings.investigation_timeout_s + 60,
+        )
+        log.info(
+            "investigation providers",
+            providers=sorted(providers),
+            default=settings.investigation_provider,
+            auto=settings.auto_investigate,
+        )
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
@@ -93,6 +135,8 @@ def _cmd_worker(_: argparse.Namespace) -> int:
         finally:
             await prometheus.aclose()
             await loki.aclose()
+            if ollama is not None:
+                await ollama.aclose()
             await container.engine.dispose()
             log.info("worker stopped")
 

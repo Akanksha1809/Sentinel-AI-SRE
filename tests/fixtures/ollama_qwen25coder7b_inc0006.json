@@ -1,0 +1,18 @@
+{
+  "_provenance": "Live qwen2.5-coder:7b output for INC-0006 (scenario C, 2026-10-09, 507s). Reconstructed from the persisted report plus validation.dropped_citations (the raw output was not stored then; it is now). Citations as the model emitted them: 'ref:<name>'. Confidence is the persisted value after the 0.3 uncited cap; the model's original value was not recorded.",
+  "summary": "The shop-api p95 latency has increased significantly, reaching above 300ms. The request throughput has also decreased sharply, indicating a potential issue with the service's ability to handle incoming requests.",
+  "suspected_root_cause": {
+    "statement": "A recent configuration change (CHG-78 tune pool size) in version 1.0.0 of the shop-api may have caused the observed issues.",
+    "confidence": 0.3,
+    "cited_evidence": [
+      "ref:change.deployments",
+      "ref:derived.change_correlation"
+    ]
+  },
+  "alternative_hypotheses": [],
+  "recommended_actions": [],
+  "next_investigative_steps": [],
+  "data_gaps": [
+    "No data available for HTTP 5xx error ratio by version, which could provide more insight into the impact of the configuration change."
+  ]
+}

@@ -64,3 +64,7 @@ Architecture, threat model, data flow, directory layout, API contracts, data mod
 2. **Ollama model**: [use the installed `qwen2.5-coder:7b`] or pull a smaller or general-instruct model (a download, which needs your OK).
 3. **Kubernetes**: [implement the backend with fake-client tests only] or create a dedicated `sentinel` kind cluster for live K8s demos. The existing `ai-platform-engineer` cluster will not be touched either way.
 4. **GitHub**: [local git only until Phase 8] then create a repo and push, only with your explicit approval.
+
+## Changes during implementation
+- **Phase 5 pulled the runbook YAML format and loader forward from Phase 6.** Validating model-recommended actions needs the catalogue (IDs and typed parameter schemas). Policy, approvals, execution and verification remain in Phase 6.
+- **Phase 5 added focused evidence collection.** When a new kind of alert joins an incident, or an alert reopens one, evidence is anchored on that alert and the incident is re-investigated. This was found live (see PROJECT_STATUS.md).

@@ -25,6 +25,7 @@ from sentinel.evidence.collector import (
 )
 from sentinel.ids import Clock
 from sentinel.incidents.service import IncidentNotFoundError, IncidentService
+from sentinel.jobs.queue import JobQueue
 from sentinel.observability.metrics import Metrics
 from sentinel.persistence.models import (
     Deployment,
@@ -36,6 +37,20 @@ from sentinel.persistence.models import (
 log = structlog.get_logger("sentinel.evidence")
 
 JOB_KIND = "evidence.collect"
+# Triggers whose collection focuses on one alert ("<prefix><alertname>") and that start an
+# automatic investigation: a new kind of alert joined, or an alert reopened the incident.
+FOCUS_PREFIXES = ("alert.new:", "incident.reopened:")
+
+
+def focus_alertname(trigger: str) -> str | None:
+    for prefix in FOCUS_PREFIXES:
+        if trigger.startswith(prefix):
+            return trigger.removeprefix(prefix)
+    return None
+
+
+def auto_investigates(trigger: str) -> bool:
+    return trigger == "incident.created" or focus_alertname(trigger) is not None
 
 
 def job_dedupe_key(incident_id: uuid.UUID | str) -> str:
@@ -50,15 +65,20 @@ class EvidenceService:
         incidents: IncidentService,
         collector: EvidenceCollector,
         metrics: Metrics,
+        *,
+        jobs: JobQueue | None = None,
+        auto_investigate_with: str | None = None,
     ) -> None:
         self._sessions = sessions
         self._clock = clock
         self._incidents = incidents
         self._collector = collector
         self._metrics = metrics
+        self._jobs = jobs
+        self._auto_provider = auto_investigate_with
 
     async def _context(
-        self, incident_id: uuid.UUID
+        self, incident_id: uuid.UUID, trigger: str = ""
     ) -> tuple[IncidentContext, list[ChangeCandidate]]:
         async with self._sessions() as session:
             incident = (
@@ -86,12 +106,19 @@ class EvidenceService:
                 .scalars()
                 .all()
             )
+        alertnames = frozenset(a.alertname for a in incident.alerts)
+        focus_at = None
+        if focus := focus_alertname(trigger):
+            focus_starts = [a.starts_at for a in incident.alerts if a.alertname == focus]
+            if focus_starts:  # anchor on the newest problem in this incident
+                alertnames, focus_at = frozenset({focus}), max(focus_starts)
         ctx = IncidentContext(
             service=incident.service,
             opened_at=incident.opened_at,
             first_alert_at=first_alert,
             resolved_at=incident.resolved_at,
-            alertnames=frozenset(a.alertname for a in incident.alerts),
+            alertnames=alertnames,
+            focus_at=focus_at,
         )
         changes = [
             ChangeCandidate(
@@ -114,7 +141,7 @@ class EvidenceService:
     ) -> uuid.UUID:
         started = self._clock.now()
         t0 = time.perf_counter()
-        ctx, changes = await self._context(incident_id)
+        ctx, changes = await self._context(incident_id, trigger)
         result = await self._collector.collect(ctx, changes, self._clock.now())
 
         async with self._sessions.begin() as session:
@@ -158,6 +185,19 @@ class EvidenceService:
                 {"collection_id": str(collection.id), "status": result.status, "trigger": trigger},
             )
             collection_id = collection.id
+            # Investigate automatically after the *first* evidence for a (re)opened incident,
+            # in the same transaction: the job exists if and only if the evidence does.
+            if self._jobs and self._auto_provider and auto_investigates(trigger):
+                await self._jobs.enqueue(
+                    session,
+                    "investigation.run",
+                    {
+                        "incident_id": str(incident_id),
+                        "provider": self._auto_provider,
+                        "requested_by": "sentinel:auto",
+                    },
+                    dedupe_key=f"investigation.run:{incident_id}",
+                )
 
         elapsed = time.perf_counter() - t0
         self._metrics.evidence_collections.labels(result.status).inc()

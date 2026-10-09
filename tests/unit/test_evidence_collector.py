@@ -220,7 +220,7 @@ async def test_total_failure_is_reported_as_failed() -> None:
 async def test_empty_metrics_are_flagged_no_data() -> None:
     out = await collect(FakeTelemetry(), ctx("ShopApiHighErrorBurnRate"))
     assert Flag.NO_DATA in out["metric.error_ratio"].flags  # type: ignore[attr-defined]
-    assert out["derived.onset"].data["method"].startswith("first alert")  # type: ignore[attr-defined]
+    assert out["derived.onset"].data["method"].startswith("anchor alert")  # type: ignore[attr-defined]
 
 
 async def test_injected_log_text_is_flagged_sanitised_and_kept_as_data() -> None:
@@ -251,3 +251,53 @@ async def test_unsafe_service_name_is_refused() -> None:
 
 def test_log_rate_template_groups_by_version_and_revision() -> None:
     assert "by (version, config_revision)" in ERROR_LOG_RATE_BY_VERSION
+
+
+async def test_new_problem_in_existing_incident_is_correlated_from_its_own_onset() -> None:
+    """Regression (live, INC-0006): a latency incident opened at T; a config change at T+7m
+    caused a crash loop. Anchored on the first alert, the change scored 0 ("after onset").
+    Focused on the new crash-loop alert, it must be the top candidate."""
+    t = FakeTelemetry()
+    latency_alert = ALERT_AT - timedelta(minutes=8)
+    crash_at = ALERT_AT - timedelta(seconds=20)
+    t.set_metric(
+        "metric.restarts",
+        Series({"replica": "1"}, ramp(ALERT_AT - timedelta(minutes=40), NOW, 0, 8, crash_at)),
+    )
+    t.log_metrics = [
+        Series({"version": "1.0.0", "config_revision": "r2"}, (Point(NOW.timestamp(), 40.0),))
+    ]
+    change = ChangeCandidate(
+        "chg", SVC, "1.0.0", "1.0.0", "r2", "r1", crash_at - timedelta(seconds=15), "CHG-77"
+    )
+    unfocused = IncidentContext(
+        SVC,
+        latency_alert,
+        latency_alert,
+        None,
+        frozenset({"ShopApiHighLatency", "ShopApiCrashLooping"}),
+    )
+    focused = IncidentContext(
+        SVC,
+        latency_alert,
+        latency_alert,
+        None,
+        frozenset({"ShopApiCrashLooping"}),
+        focus_at=ALERT_AT,
+    )
+    before = await EvidenceCollector(t, t).collect(unfocused, [change], NOW)
+    after = await EvidenceCollector(t, t).collect(focused, [change], NOW)
+
+    def score(result: object) -> float:
+        corr = next(
+            i
+            for i in result.items  # type: ignore[attr-defined]
+            if i.ref == "derived.change_correlation"
+        )
+        return float(corr.data["scores"][0]["score"])
+
+    assert score(before) == 0.0  # the bug: change looked like it came after onset
+    assert score(after) > 0.9
+    onset = next(i for i in after.items if i.ref == "derived.onset")
+    assert onset.data["focus_alertnames"] == ["ShopApiCrashLooping"]
+    assert Flag.PRIMARY in next(i for i in after.items if i.ref == "metric.restarts").flags

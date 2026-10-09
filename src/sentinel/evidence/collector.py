@@ -58,11 +58,23 @@ MAX_SAMPLES = 15
 
 @dataclass(frozen=True)
 class IncidentContext:
+    """What to collect for. `alertnames` are the *focus* alerts (they decide `primary`).
+
+    `focus_at` anchors onset detection and change correlation. It defaults to the first
+    alert; when a new kind of alert joins an existing incident, the collection focuses on
+    that alert, because one service can have two distinct problems in one incident.
+    """
+
     service: str
     opened_at: datetime
     first_alert_at: datetime
     resolved_at: datetime | None
     alertnames: frozenset[str]
+    focus_at: datetime | None = None
+
+    @property
+    def anchor(self) -> datetime:
+        return self.focus_at or self.first_alert_at
 
 
 def fmt(value: float, unit: str) -> str:
@@ -191,7 +203,7 @@ class EvidenceCollector:
                 flags | {Flag.NO_DATA},
             ), None
         best: tuple[StepChange, dict[str, str]] | None = None
-        cutoff = (ctx.first_alert_at + DETECTION_TAIL).timestamp()
+        cutoff = (ctx.anchor + DETECTION_TAIL).timestamp()
         for s in res:
             head = [p for p in s.points if p.ts <= cutoff]
             sc = detect_step(head, min_abs_delta=tpl.step_min_delta)
@@ -234,26 +246,28 @@ class EvidenceCollector:
             (ref, sc)
             for ref, sc in steps.items()
             if any(t.ref == ref and t.primary_for & ctx.alertnames for t in METRICS)
-            and sc.at <= ctx.first_alert_at + timedelta(minutes=1)
+            and sc.at <= ctx.anchor + timedelta(minutes=1)
         ]
         if primary:
             ref, sc = min(primary, key=lambda x: x[1].at)
             onset, method = sc.at, f"earliest significant step change in {ref}"
         else:
-            onset, method = ctx.first_alert_at, "first alert start (no primary step change found)"
-        lag = (ctx.first_alert_at - onset).total_seconds()
+            onset, method = ctx.anchor, "anchor alert start (no primary step change found)"
+        lag = (ctx.anchor - onset).total_seconds()
         return onset, Evidence(
             "derived.onset",
             EvidenceKind.DERIVED,
             "sentinel",
             "Estimated incident onset",
-            f"Onset {onset.strftime('%H:%M:%S')}Z via {method}; first alert fired "
+            f"Onset {onset.strftime('%H:%M:%S')}Z via {method}; the anchoring alert fired "
             f"{lag:.0f}s later.",
             None,
             {
                 "onset": onset.isoformat(),
                 "method": method,
                 "first_alert_at": ctx.first_alert_at.isoformat(),
+                "anchor_at": ctx.anchor.isoformat(),
+                "focus_alertnames": sorted(ctx.alertnames),
             },
         )
 
