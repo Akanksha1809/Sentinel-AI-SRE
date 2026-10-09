@@ -88,6 +88,25 @@ groups:
 
   - name: platform
     rules:
+      - alert: SentinelDown
+        expr: up{job="sentinel"} == 0 or absent(up{job="sentinel"})
+        for: 1m
+        labels:
+          severity: critical
+          service: sentinel
+        annotations:
+          summary: "Sentinel API is down: alerts are not being turned into incidents"
+
+      - alert: SentinelWebhookRejections
+        expr: sum(increase(sentinel_webhook_rejected_total[5m])) > 0
+        for: 0s
+        labels:
+          severity: warning
+          service: sentinel
+        annotations:
+          summary: "Sentinel rejected Alertmanager deliveries (check token/payload)"
+          description: "{{ $value | printf \"%.0f\" }} rejected deliveries in 5 minutes."
+
       - alert: MonitoringTargetDown
         expr: up{job!="shop-api"} == 0
         for: 1m

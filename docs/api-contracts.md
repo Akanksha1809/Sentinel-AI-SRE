@@ -18,20 +18,21 @@ FastAPI generates the OpenAPI spec at `/api/v1/openapi.json`. The contract tests
 | Method | Path | Role | Body / Response |
 |---|---|---|---|
 | POST | `/webhooks/alertmanager` | webhook token | Alertmanager webhook v4 payload (≤256 KB) → `202 {"received":n,"new":k,"incidents":[{"id","short_id","created":bool}]}` |
-| POST | `/deployments` | `deployer` token (actuator) or admin | `{service, version, previous_version?, config_revision?, deployed_at, deployed_by, change_ref?}` → `201 Deployment`. Idempotent on `(service, version, deployed_at)` |
+| POST | `/deployments` | deployer token (actuator) or admin | Actuator `DeploymentEvent` shape → `201` (new) or `200` (replay). Idempotent on `(service, version, config_revision, deployed_at)` |
 | GET | `/deployments?service=&since=` | viewer | `[Deployment]` |
 
 ## Incidents
 
 | Method | Path | Role | Notes |
 |---|---|---|---|
-| GET | `/incidents?status=&service=&severity=&limit=&cursor=` | viewer | Paginated `IncidentSummary[]` |
-| GET | `/incidents/{id}` | viewer | `IncidentDetail` = incident + alerts + timeline + latest investigation + action requests + telemetry links (Grafana/Prometheus/Loki Explore URLs) |
+| GET | `/incidents?status=&service=&severity=&active=&limit=&cursor=` | viewer | `{items: IncidentSummary[], next_cursor}`. Newest first; `cursor` is the incident number to continue below |
+| GET | `/incidents/{id}` (UUID or `INC-0001`) | viewer | `IncidentDetail` = incident + alerts + timeline + latest investigation + action requests + telemetry links (Grafana/Prometheus/Loki Explore URLs) |
 | POST | `/incidents/{id}/acknowledge` | responder | `{note?}`. Idempotent |
-| POST | `/incidents/{id}/resolve` | responder | `{reason}`. Manual; audited; flagged "resolved without verification" |
+| POST | `/incidents/{id}/resolve` | responder | `{reason}`. Manual; audited; `resolved_verified=false` |
+| POST | `/incidents/{id}/close` | responder | Only from `resolved` (otherwise 409 with `current_status`) |
 | POST | `/incidents/{id}/notes` | responder | `{text}` → timeline event |
 | GET | `/incidents/{id}/evidence` | viewer | `EvidenceItem[]` (observations + derived) |
-| POST | `/incidents/{id}/evidence/refresh` | responder | Enqueues collection → `202 {job_id}` |
+| POST | `/incidents/{id}/evidence/refresh` | responder | Enqueues collection → `202 {job_id}` *(Phase 4)* |
 
 ## Investigations
 

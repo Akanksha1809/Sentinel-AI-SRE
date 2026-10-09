@@ -70,3 +70,10 @@ Run from inside the actuator container with the Docker SDK, playing a compromise
 | reach the rw proxy directly, bypassing the guard | n/a | impossible (not on that network) |
 
 The privileged container the first probe created (never started) was removed immediately.
+
+### 2026-10-09: Phase 3 controls verified by tests
+- **T4 (spoofed webhook):** missing, wrong, or Basic credentials, and an admin API token, all get 401 on the webhook; >256 KB bodies get 413, including chunked bodies without Content-Length; malformed payloads get 422 (`tests/api/test_api.py`).
+- **T5 (unauthorised actions, partial; approvals arrive in Phase 6):** role matrix viewer < responder < approver < admin enforced per endpoint; tokens stored only as SHA-256.
+- **T12 (audit tampering):** the trigger blocks UPDATE/DELETE/TRUNCATE even for the table owner; the app role lacks those privileges; a superuser edit with triggers suspended is detected at the exact sequence number (`tests/integration/test_database.py`).
+- **T13 (secrets):** DB passwords and tokens come only from secret files; the superuser password is mounted only into the one-shot `sentinel-migrate` container.
+- **T15 (alert floods):** at most 200 alerts per payload, body cap, idempotent upserts; repeated notifications only bump `receive_count`.

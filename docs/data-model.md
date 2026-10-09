@@ -1,11 +1,13 @@
 # Sentinel — Data Model (PostgreSQL 18)
 
-All tables use `uuid` PKs (UUIDv7, so they sort by time) and `timestamptz` in UTC. JSONB columns are validated by Pydantic before write. Alembic owns all DDL.
+All tables use `uuid` PKs (UUIDv7, so they sort by time) and `timestamptz` in UTC. JSONB columns are validated by Pydantic before write. Alembic owns all DDL (`src/sentinel/migrations`).
+
+> **Implemented in migration 0001 (Phase 3):** `incidents`, `alerts`, `incident_events`, `deployments`, `principals`, `jobs`, `audit_events`. The remaining tables arrive with their phases (evidence: 4, investigations/hypotheses: 5, runbooks/actions/approvals/executions/verifications: 6, postmortems: 7).
+>
+> **Deviation from the Phase 1 design:** there is no `services` table. Incidents and deployments carry `service` + `environment` as validated text, and grouping uses `dedupe_key = environment/service`. A table would add a join with no current consumer; it can be introduced when per-service metadata (owners, SLO targets) is needed.
 
 ```mermaid
 erDiagram
-    services ||--o{ incidents : has
-    services ||--o{ deployments : has
     incidents ||--o{ alerts : groups
     incidents ||--o{ incident_events : timeline
     incidents ||--o{ evidence_items : collects
@@ -24,11 +26,10 @@ erDiagram
 
 | Table | Key columns | Notes |
 |---|---|---|
-| `services` | `id, name (unique), environment, owner, grafana_dashboard_uid` | Seeded from config |
-| `alerts` | `id, fingerprint, status (firing/resolved), alertname, severity, labels jsonb, annotations jsonb, starts_at, ends_at, last_received_at, receive_count, incident_id fk, raw jsonb` | Unique `(fingerprint, starts_at)` gives dedupe; repeated notifications bump `receive_count` |
-| `incidents` | `id, short_id (INC-0001), service_id, title, status, severity, opened_at, acknowledged_at, acknowledged_by, mitigated_at, resolved_at, closed_at, dedupe_key, version int` | `version` for optimistic locking. Partial unique index on `dedupe_key WHERE status NOT IN ('resolved','closed')`, so there is only one open incident per service |
+| `alerts` | `id, fingerprint, starts_at, status, alertname, service, severity, summary, labels jsonb, annotations jsonb, generator_url, ends_at, first/last_received_at, receive_count, incident_id fk` | Unique `(fingerprint, starts_at)` gives dedupe; repeated notifications bump `receive_count` |
+| `incidents` | `id, number (sequence → INC-0001), service, environment, dedupe_key, title, status, severity, opened_at, acknowledged_at/by, resolved_at, resolution, resolved_verified, closed_at, updated_at, version` | `version` for optimistic locking. Partial unique index on `dedupe_key WHERE status NOT IN ('resolved','closed')`, so there is only one active incident per key. `resolved_verified=false` marks manual resolution |
 | `incident_events` | `id, incident_id, at, kind, actor, summary, data jsonb, correlation_id` | Timeline for the UI and postmortem |
-| `deployments` | `id, service_id, version, previous_version, config_revision, deployed_at, deployed_by, source (actuator/api/k8s), change_ref` | Change history for correlation |
+| `deployments` | `id, service, environment, version, config_revision, previous_version, previous_config_revision, deployed_at, deployed_by, source, change_ref, recorded_at` | Unique (NULLS NOT DISTINCT) on `(service, version, config_revision, deployed_at)`, so recording is idempotent |
 | `evidence_items` | `id, incident_id, kind (metric/log/deployment/derived), source, query, range_start, range_end, summary, data jsonb, flags text[], collected_at` | **Observations.** `flags` includes `possible_prompt_injection`, `truncated` |
 | `investigations` | `id, incident_id, status (pending/running/succeeded/failed), provider, model, prompt_version, input_hash, started_at, finished_at, error, report jsonb, rejected_suggestions jsonb` | Full validated report stored |
 | `hypotheses` | `id, investigation_id, rank, statement, confidence numeric(3,2), cited_evidence uuid[], is_primary bool, generated bool default true` | **AI-generated** |
@@ -39,8 +40,8 @@ erDiagram
 | `verifications` | `id, action_request_id, criteria jsonb, samples jsonb, passed bool, started_at, finished_at` | Measured values are stored |
 | `postmortems` | `id, incident_id, status (draft/final), markdown, generated_sections jsonb, authored_by, updated_at` | AI-drafted sections are flagged |
 | `principals` | `id, name, role, token_sha256, active, created_at` | Bootstrap admin from secret |
-| `jobs` | `id, kind, payload jsonb, status, attempts, max_attempts, run_after, locked_by, locked_at, last_error` | Queue via `SKIP LOCKED` |
-| `audit_events` | `seq bigserial, id, at, actor, action, subject_type, subject_id, correlation_id, data jsonb, prev_hash, hash` | Append-only (trigger), hash chain |
+| `jobs` | `id, kind, payload jsonb, status, dedupe_key, attempts, max_attempts, run_after, locked_by, locked_at, last_error, created_at, finished_at` | Queue via `SKIP LOCKED`. Partial unique `dedupe_key` while pending/running |
+| `audit_events` | `seq bigserial, id, at, actor, action, subject_type, subject_id, correlation_id, data jsonb, prev_hash, hash` | Append-only: a trigger blocks UPDATE/DELETE/TRUNCATE for every role. SHA-256 chain over canonical JSON (UTC timestamps), appends serialised by an advisory lock |
 
 ## State machines
 
@@ -53,4 +54,5 @@ Terminal states: `rejected`, `expired`, `failed`, `verification_failed`, `cancel
 ## Roles (DB)
 
 - `sentinel_migrator`: owns the schema (DDL), used only by `alembic upgrade`.
-- `sentinel_app`: DML on all tables except `audit_events` (INSERT/SELECT only). No DDL.
+- `sentinel_app`: DML on all tables except `audit_events` (INSERT/SELECT only); SELECT on `alembic_version` (readiness). No DDL. Verified by `tests/integration/test_database.py`.
+- Both roles are created by `sentinel db init` (the `sentinel-migrate` one-shot service), the only place the superuser password is used.

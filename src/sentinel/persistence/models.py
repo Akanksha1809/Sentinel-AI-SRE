@@ -1,0 +1,239 @@
+"""SQLAlchemy ORM models. Alembic migrations in `migrations/` own the DDL.
+
+See docs/data-model.md for the entity overview and state machines.
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy import (
+    BigInteger,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from sentinel.ids import uuid7
+
+NAMING = {
+    "ix": "ix_%(column_0_label)s",
+    "uq": "uq_%(table_name)s_%(column_0_name)s",
+    "ck": "ck_%(table_name)s_%(constraint_name)s",
+    "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    "pk": "pk_%(table_name)s",
+}
+
+Json = dict[str, Any]
+TS = DateTime(timezone=True)
+
+
+class Base(DeclarativeBase):
+    metadata = MetaData(naming_convention=NAMING)
+    type_annotation_map = {Json: JSONB, datetime: TS, uuid.UUID: UUID(as_uuid=True)}  # noqa: RUF012
+
+
+def _pk() -> Mapped[uuid.UUID]:
+    return mapped_column(primary_key=True, default=uuid7)
+
+
+class Incident(Base):
+    __tablename__ = "incidents"
+
+    id: Mapped[uuid.UUID] = _pk()
+    number: Mapped[int] = mapped_column(
+        BigInteger, server_default=text("nextval('incident_number_seq')"), unique=True
+    )
+    service: Mapped[str] = mapped_column(String(64))
+    environment: Mapped[str] = mapped_column(String(64))
+    dedupe_key: Mapped[str] = mapped_column(String(130))
+    title: Mapped[str] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(20))
+    severity: Mapped[str] = mapped_column(String(10))
+    opened_at: Mapped[datetime]
+    acknowledged_at: Mapped[datetime | None]
+    acknowledged_by: Mapped[str | None] = mapped_column(String(80))
+    resolved_at: Mapped[datetime | None]
+    resolution: Mapped[str | None] = mapped_column(Text)
+    resolved_verified: Mapped[bool] = mapped_column(server_default=text("false"))
+    closed_at: Mapped[datetime | None]
+    updated_at: Mapped[datetime]
+    version: Mapped[int] = mapped_column(Integer, server_default=text("1"))
+
+    alerts: Mapped[list[Alert]] = relationship(
+        back_populates="incident", order_by="Alert.starts_at"
+    )
+    events: Mapped[list[IncidentEvent]] = relationship(
+        back_populates="incident", order_by="IncidentEvent.seq"
+    )
+
+    __mapper_args__ = {"version_id_col": version}  # noqa: RUF012 (optimistic locking)
+    __table_args__ = (
+        # At most one *active* incident per grouping key.
+        Index(
+            "uq_incidents_active_dedupe_key",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text("status NOT IN ('resolved', 'closed')"),
+        ),
+        Index("ix_incidents_status_opened_at", "status", "opened_at"),
+        CheckConstraint(
+            "status IN ('open','acknowledged','investigating','remediating',"
+            "'verifying','resolved','closed')",
+            name="status",
+        ),
+        CheckConstraint("severity IN ('info','warning','critical')", name="severity"),
+    )
+
+    @property
+    def short_id(self) -> str:
+        return f"INC-{self.number:04d}"
+
+
+class Alert(Base):
+    __tablename__ = "alerts"
+
+    id: Mapped[uuid.UUID] = _pk()
+    fingerprint: Mapped[str] = mapped_column(String(32))
+    starts_at: Mapped[datetime]
+    status: Mapped[str] = mapped_column(String(10))
+    alertname: Mapped[str] = mapped_column(String(64))
+    service: Mapped[str] = mapped_column(String(64))
+    severity: Mapped[str] = mapped_column(String(10))
+    summary: Mapped[str] = mapped_column(String(300))
+    labels: Mapped[Json]
+    annotations: Mapped[Json]
+    generator_url: Mapped[str] = mapped_column(Text)
+    ends_at: Mapped[datetime | None]
+    first_received_at: Mapped[datetime]
+    last_received_at: Mapped[datetime]
+    receive_count: Mapped[int] = mapped_column(Integer, server_default=text("1"))
+    incident_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("incidents.id", ondelete="RESTRICT"), index=True
+    )
+    incident: Mapped[Incident | None] = relationship(back_populates="alerts")
+
+    __table_args__ = (UniqueConstraint("fingerprint", "starts_at", name="uq_alerts_identity"),)
+
+
+class IncidentEvent(Base):
+    __tablename__ = "incident_events"
+
+    seq: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = mapped_column(unique=True, default=uuid7)
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="RESTRICT"), index=True
+    )
+    at: Mapped[datetime]
+    kind: Mapped[str] = mapped_column(String(50))
+    actor: Mapped[str] = mapped_column(String(80))
+    summary: Mapped[str] = mapped_column(String(500))
+    data: Mapped[Json] = mapped_column(server_default=text("'{}'::jsonb"))
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+
+    incident: Mapped[Incident] = relationship(back_populates="events")
+
+
+class Deployment(Base):
+    __tablename__ = "deployments"
+
+    id: Mapped[uuid.UUID] = _pk()
+    service: Mapped[str] = mapped_column(String(64))
+    environment: Mapped[str] = mapped_column(String(64))
+    version: Mapped[str] = mapped_column(String(64))
+    config_revision: Mapped[str | None] = mapped_column(String(32))
+    previous_version: Mapped[str | None] = mapped_column(String(64))
+    previous_config_revision: Mapped[str | None] = mapped_column(String(32))
+    deployed_at: Mapped[datetime]
+    deployed_by: Mapped[str] = mapped_column(String(120))
+    source: Mapped[str] = mapped_column(String(32))
+    change_ref: Mapped[str | None] = mapped_column(String(120))
+    recorded_at: Mapped[datetime]
+
+    __table_args__ = (
+        UniqueConstraint(
+            "service",
+            "version",
+            "config_revision",
+            "deployed_at",
+            name="uq_deployments_identity",
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index("ix_deployments_service_deployed_at", "service", "deployed_at"),
+    )
+
+
+class Principal(Base):
+    __tablename__ = "principals"
+
+    id: Mapped[uuid.UUID] = _pk()
+    name: Mapped[str] = mapped_column(String(80), unique=True)
+    role: Mapped[str] = mapped_column(String(20))
+    token_sha256: Mapped[str] = mapped_column(String(64), unique=True)
+    active: Mapped[bool] = mapped_column(server_default=text("true"))
+    created_at: Mapped[datetime]
+
+    __table_args__ = (
+        CheckConstraint("role IN ('viewer','responder','approver','admin')", name="role"),
+    )
+
+
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id: Mapped[uuid.UUID] = _pk()
+    kind: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[Json]
+    status: Mapped[str] = mapped_column(String(10), server_default=text("'pending'"))
+    dedupe_key: Mapped[str | None] = mapped_column(String(200))
+    attempts: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    max_attempts: Mapped[int] = mapped_column(Integer, server_default=text("3"))
+    run_after: Mapped[datetime]
+    locked_by: Mapped[str | None] = mapped_column(String(80))
+    locked_at: Mapped[datetime | None]
+    last_error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime]
+    finished_at: Mapped[datetime | None]
+
+    __table_args__ = (
+        Index("ix_jobs_claim", "status", "run_after"),
+        # A job with a dedupe key can only be queued/running once at a time.
+        Index(
+            "uq_jobs_active_dedupe_key",
+            "dedupe_key",
+            unique=True,
+            postgresql_where=text("status IN ('pending', 'running')"),
+        ),
+        CheckConstraint("status IN ('pending','running','done','failed')", name="status"),
+    )
+
+
+class AuditEvent(Base):
+    """Append-only, hash-chained. UPDATE/DELETE are blocked by a trigger (migration 0001)."""
+
+    __tablename__ = "audit_events"
+
+    seq: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    id: Mapped[uuid.UUID] = mapped_column(unique=True, default=uuid7)
+    at: Mapped[datetime]
+    actor: Mapped[str] = mapped_column(String(120))
+    action: Mapped[str] = mapped_column(String(64))
+    subject_type: Mapped[str] = mapped_column(String(32))
+    subject_id: Mapped[str] = mapped_column(String(64))
+    correlation_id: Mapped[str | None] = mapped_column(String(64))
+    data: Mapped[Json]
+    prev_hash: Mapped[str] = mapped_column(String(64))
+    hash: Mapped[str] = mapped_column(String(64), unique=True)
+
+    __table_args__ = (Index("ix_audit_events_subject", "subject_type", "subject_id"),)

@@ -8,7 +8,8 @@ SECRETS := secrets
 
 .DEFAULT_GOAL := help
 .PHONY: help setup secrets images build up down clean wait ps logs \
-        test test-unit lint fmt typecheck security check-monitoring check dashboards
+        test test-unit test-integration lint fmt typecheck security check-monitoring check \
+        dashboards token
 
 help: ## Show targets
 	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  \033[36m%-18s\033[0m %s\n",$$1,$$2}'
@@ -55,7 +56,10 @@ logs: ## Tail stack logs (SERVICE=name to filter)
 test-unit: ## Unit + policy tests (no Docker needed)
 	uv run pytest -m "not integration and not e2e and not ollama"
 
-test: test-unit check-monitoring ## All offline tests incl. promtool/amtool
+test-integration: ## Integration + API tests against real Postgres (needs Docker)
+	uv run pytest -m integration
+
+test: test-unit test-integration check-monitoring ## All tests (Docker needed for integration)
 
 lint: ## Ruff lint + format check
 	uv run ruff check .
@@ -67,6 +71,9 @@ fmt: ## Auto-format
 
 typecheck: ## mypy --strict
 	uv run mypy src services/demo-app/src services/actuator/src services/loadgen/src
+
+token: ## Create an API token: make token NAME=alice ROLE=responder
+	$(COMPOSE) exec sentinel-api sentinel token create $(NAME) $(ROLE)
 
 security: ## Bandit + pip-audit
 	uv run bandit -q -c pyproject.toml -r src services/demo-app/src services/actuator/src services/loadgen/src

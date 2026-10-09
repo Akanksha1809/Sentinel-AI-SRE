@@ -14,6 +14,9 @@ SECRETS=(
   fault_token
   chaos_token
   deployer_token
+  sentinel_migrator_db_password
+  sentinel_app_db_password
+  sentinel_admin_token
 )
 
 mkdir -p secrets

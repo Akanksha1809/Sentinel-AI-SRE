@@ -22,6 +22,9 @@ scrape_configs:
       - url: http://actuator:8080/v1/sd/targets
         refresh_interval: 5s
 
+  - job_name: sentinel
+    static_configs: [{ targets: ["sentinel-api:8080"] }]
+
   - job_name: actuator
     static_configs: [{ targets: ["actuator:8080"] }]
 

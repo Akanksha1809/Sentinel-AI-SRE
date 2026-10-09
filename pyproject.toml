@@ -4,7 +4,21 @@ version = "0.1.0"
 description = "AI-assisted SRE incident response platform"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-dependencies = []
+dependencies = [
+    "fastapi==0.143.0",
+    "uvicorn[standard]==0.54.0",
+    "pydantic==2.14.0",
+    "pydantic-settings==2.15.0",
+    "sqlalchemy[asyncio]==2.1.4",
+    "alembic==1.20.0",
+    "psycopg[binary]==3.3.6",
+    "structlog==26.1.0",
+    "prometheus-client==0.26.0",
+    "httpx==0.28.1",
+]
+
+[project.scripts]
+sentinel = "sentinel.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.24,<0.13"]
@@ -24,10 +38,12 @@ dev = [
     "pip-audit==2.10.1",
     "pyyaml>=6.0.3",
     "types-pyyaml",
+    "testcontainers[postgres]==4.15.0",
 ]
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib -ra --strict-markers"
+pythonpath = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = [
@@ -54,6 +70,8 @@ ignore = ["S101"]  # assert is fine in tests; production code uses explicit exce
 
 [tool.ruff.lint.per-file-ignores]
 "**/tests/**" = ["S105", "S106", "S108"]
+# Generated DDL; SQL there is assembled only from module constants.
+"src/sentinel/migrations/versions/*" = ["E501", "S608"]
 
 [tool.mypy]
 python_version = "3.12"

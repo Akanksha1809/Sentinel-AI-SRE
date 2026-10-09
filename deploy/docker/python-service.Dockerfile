@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Shared image for the Python services in the uv workspace.
-#   PACKAGE: workspace member to install (shop-api | sentinel-actuator | sentinel-loadgen)
+#   PACKAGE: workspace package to install (sentinel | shop-api | sentinel-actuator | sentinel-loadgen)
 #   MODULE:  python module to run (`python -m $MODULE`)
 #   RELEASE_DEFECT / APP_VERSION: baked-in release identity (shop-api only)
 #   HEALTHCHECK_URL: polled by the image HEALTHCHECK
@@ -21,6 +21,7 @@ COPY services/demo-app/pyproject.toml services/demo-app/
 COPY services/actuator/pyproject.toml services/actuator/
 COPY services/loadgen/pyproject.toml services/loadgen/
 RUN uv sync --frozen --no-dev --package "${PACKAGE}" --no-install-workspace
+COPY src/ src/
 COPY services/ services/
 RUN uv sync --frozen --no-dev --package "${PACKAGE}" --no-editable
 

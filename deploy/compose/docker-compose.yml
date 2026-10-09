@@ -111,7 +111,7 @@ services:
       ACTUATOR_TARGET_NETWORK: sentinel-app
       ACTUATOR_CATALOG_PATH: /etc/actuator/releases.yaml
       ACTUATOR_POLL_INTERVAL_S: "5"
-      ACTUATOR_SENTINEL_DEPLOYMENTS_URL: ${SENTINEL_DEPLOYMENTS_URL:-}
+      ACTUATOR_SENTINEL_DEPLOYMENTS_URL: http://sentinel-api:8080/api/v1/deployments
     secrets: [actuator_token, fault_token, chaos_token, deployer_token]
     volumes:
       - ../actuator/releases.yaml:/etc/actuator/releases.yaml:ro
@@ -161,6 +161,50 @@ services:
         MODULE: shop_api
         APP_VERSION: "1.1.0"
         RELEASE_DEFECT: checkout_null_price
+
+  # ---------------------------------------------------------------- sentinel
+  # One-shot: creates least-privilege DB roles (as superuser) and applies migrations
+  # (as sentinel_migrator). The only service that ever sees the superuser password.
+  sentinel-migrate:
+    <<: *hardening
+    image: sentinel/sentinel:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/python-service.Dockerfile
+      args:
+        PACKAGE: sentinel
+        MODULE: sentinel.cli
+        HEALTHCHECK_URL: http://127.0.0.1:8080/healthz
+    command: ["sentinel", "db", "init"]
+    restart: "no"
+    read_only: true
+    mem_limit: 128m
+    environment:
+      SENTINEL_DB_HOST: postgres
+    secrets: [postgres_password, sentinel_migrator_db_password, sentinel_app_db_password]
+    networks: [data]
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  sentinel-api:
+    <<: *hardening
+    image: sentinel/sentinel:dev
+    command: ["sentinel", "api"]
+    read_only: true
+    mem_limit: 256m
+    labels: *loggable
+    environment:
+      SENTINEL_DB_HOST: postgres
+      SENTINEL_ENVIRONMENT: local
+      SENTINEL_GRAFANA_URL: http://localhost:3000
+      SENTINEL_PROMETHEUS_URL: http://localhost:9090
+      HEALTHCHECK_URL: http://127.0.0.1:8080/healthz
+    secrets: [sentinel_app_db_password, alertmanager_webhook_token, deployer_token,
+              sentinel_admin_token]
+    ports: ["127.0.0.1:8080:8080"]
+    networks: [data, obs, app]
+    depends_on:
+      sentinel-migrate: { condition: service_completed_successfully }
 
   # ---------------------------------------------------------------- observability
   prometheus:
@@ -330,3 +374,6 @@ secrets:
   fault_token: { file: ../../secrets/fault_token }
   chaos_token: { file: ../../secrets/chaos_token }
   deployer_token: { file: ../../secrets/deployer_token }
+  sentinel_migrator_db_password: { file: ../../secrets/sentinel_migrator_db_password }
+  sentinel_app_db_password: { file: ../../secrets/sentinel_app_db_password }
+  sentinel_admin_token: { file: ../../secrets/sentinel_admin_token }
