@@ -61,14 +61,14 @@ class ScenarioB:
 
 
 class BrokenLLM:
-    name, model, is_mock = "ollama", "qwen2.5-coder:7b", False
+    name, model, is_mock = "ollama", "qwen2.5-coder:3b", False
 
     async def investigate(self, request: InvestigationRequest) -> dict[str, Any]:
         raise ProviderError("ollama unreachable: ConnectError")
 
 
 class HallucinatingLLM:
-    name, model, is_mock = "ollama", "qwen2.5-coder:7b", False
+    name, model, is_mock = "ollama", "qwen2.5-coder:3b", False
 
     async def investigate(self, request: InvestigationRequest) -> dict[str, Any]:
         return {

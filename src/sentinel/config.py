@@ -63,7 +63,7 @@ class Settings(BaseSettings):
     investigation_timeout_s: float = Field(default=300.0, gt=0, le=900)
     ollama_enabled: bool = False
     ollama_url: str = "http://host.lima.internal:11434"
-    ollama_model: str = Field(default="qwen2.5-coder:7b", pattern=r"^[a-zA-Z0-9._:/-]{1,80}$")
+    ollama_model: str = Field(default="qwen2.5-coder:3b", pattern=r"^[a-zA-Z0-9._:/-]{1,80}$")
     ollama_timeout_s: float = Field(default=240.0, gt=0, le=900)
     ollama_num_ctx: int = Field(default=4096, ge=2048, le=32768)  # prompt is ~2.7k tokens
     prometheus_url: str = "http://localhost:9090"

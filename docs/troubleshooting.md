@@ -66,11 +66,22 @@ collected about 10 seconds after an incident opens. `POST /api/v1/incidents/<id>
 Measured on an Apple M1 with 8 GB of unified memory, running Colima (8 GiB VM) and another
 project's containers at the same time: `qwen2.5-coder:7b` loaded in 79s, processed the prompt
 at 9 tokens/s and generated at 5 tokens/s (typical for this chip is about 100+ and 15-20).
-A ~2,700-token investigation therefore takes about 10 minutes, and the memory starvation also
-degraded the stack (Sentinel correctly opened incidents for it). Options:
-- Use the default `mock` provider (`SENTINEL_INVESTIGATION_PROVIDER=mock`).
+A ~2,700-token investigation therefore took about 10 minutes, and the memory starvation also
+degraded the stack (Sentinel correctly opened incidents for it).
+
+**Fix applied (2026-10-09): the default Ollama model is now `qwen2.5-coder:3b`**, same
+family, ~1.9 GB on disk vs 4.7 GB. On the same host: load 11s, prompt eval 90 tok/s,
+generation 41 tok/s, fully GPU-offloaded at 2.2 GB. A full investigation (same scenario)
+took **40 seconds** and correctly cited its evidence and recommended the right rollback —
+no retries needed. Install it with `ollama pull qwen2.5-coder:3b` (already the shipped
+default; override with `SENTINEL_OLLAMA_MODEL` to use something else, including the 7B).
+
+Even at 3B, running the model alongside the whole stack can still briefly starve Postgres
+on an 8 GB host (a crash-restart that self-heals via WAL replay in ~20s, with one or two
+transient scrape-gap incidents). If that's not acceptable, or you want to go even lighter:
+- Use the default `mock` provider (`SENTINEL_INVESTIGATION_PROVIDER=mock`) — no model needed.
 - Free memory: stop other containers, or give Colima less memory (`colima stop && colima start --memory 4`).
-- Use a smaller model, e.g. a 3B instruct model (`SENTINEL_OLLAMA_MODEL=...`).
+- Use a still smaller model (e.g. a 1.5B), or quit Ollama between runs (`keep_alive: 2m` already unloads it quickly).
 - For a one-off run, raise `SENTINEL_OLLAMA_TIMEOUT_S` / `SENTINEL_INVESTIGATION_TIMEOUT_S` (max 900).
 
 ## Containers can't reach Ollama

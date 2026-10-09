@@ -53,6 +53,14 @@ _Resumable work log. Update at the end of every work session. Only record result
   - Citation-format loss in real model output (see above).
   - A fixture confidence value that I had made up during drafting was replaced with the persisted value, noted in its provenance.
 
+## Model swap: qwen2.5-coder:7b → qwen2.5-coder:3b (2026-10-09)
+Switched the default Ollama model to the smaller `qwen2.5-coder:3b` (same family, ~1.9 GB vs 4.7 GB), installed alongside the 7B (both still present on disk). Changed in `src/sentinel/config.py` (`ollama_model` default) and the Compose env defaults; `SENTINEL_OLLAMA_MODEL` still overrides either way.
+- **Raw generation speed on this host** (`qwen2.5-coder:3b` vs `qwen2.5-coder:7b`): load 11.3s vs 78.7s; prompt eval 90.1 vs 9.0 tok/s; generation 40.8 vs 5.1 tok/s; fully GPU-offloaded at 2.2 GB vs 4.6 GB.
+- **Live investigation, same incident shape as the Phase 5 scenario B run** (PR-150, broken 1.1.0 deploy → reopened via `ShopApiHighErrorBurnRate`, focused evidence, onset 26s after deploy, correlation score 0.98): the 3B model finished in **39.6s** (vs 507–609s for the 7B) and on the first try produced a correctly-cited root cause (confidence 0.98, citing `change.deployments` and `derived.change_correlation` in the valid, non-decorated form) and the exact right `rollback-deployment` action (`target_version: 1.0.0, target_config_revision: r1`) — no dropped/normalised citations needed, no empty-rationale or stale-title issues seen with the 7B.
+- All 367 tests (290 unit/policy + 77 integration/API) re-run and pass with the new default; lint, strict mypy, bandit, pip-audit and the monitoring config checks are all clean.
+- **Self-inflicted finding, not model-specific:** while the 3B investigation was running alongside the whole stack and Colima, Postgres briefly crash-restarted (WAL recovery, back up in ~20s) under host memory pressure, which triggered three transient platform incidents (`SentinelWorkerDown`-type scrape gaps). All resolved automatically without data loss; this is the same class of host-memory-starvation issue noted for the 7B, just smaller in magnitude. The mock provider has no such exposure since it needs no model in memory.
+- `qwen2.5-coder:3b` is now the shipped default for the optional `ollama` provider; `mock` remains the overall default (`SENTINEL_INVESTIGATION_PROVIDER=mock`).
+
 ## What existed after Phase 4
 - `sentinel.evidence`: Prometheus and Loki clients (timeouts, bounded retries for 5xx/transport only, 5 MB cap, series caps); code-owned query templates; log sanitiser (redaction + injection flagging); step-change and change-correlation analysis; collector with per-query isolation (failures become `gap` items).
 - Migration 0002: `evidence_collections`, `evidence_items` (INSERT/SELECT only for the app role).

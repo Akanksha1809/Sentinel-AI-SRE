@@ -68,3 +68,4 @@ Architecture, threat model, data flow, directory layout, API contracts, data mod
 ## Changes during implementation
 - **Phase 5 pulled the runbook YAML format and loader forward from Phase 6.** Validating model-recommended actions needs the catalogue (IDs and typed parameter schemas). Policy, approvals, execution and verification remain in Phase 6.
 - **Phase 5 added focused evidence collection.** When a new kind of alert joins an incident, or an alert reopens one, evidence is anchored on that alert and the incident is re-investigated. This was found live (see PROJECT_STATUS.md).
+- **Decision 2 revisited (2026-10-09):** the original 7B model took 8–10 minutes per investigation and strained the 8 GB host. Pulled `qwen2.5-coder:3b` alongside it and made it the new default; same quality on a live re-run, ~40s instead of ~9 minutes. Both models remain installed; override with `SENTINEL_OLLAMA_MODEL`. See PROJECT_STATUS.md for the comparison.

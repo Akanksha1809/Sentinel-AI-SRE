@@ -461,9 +461,9 @@ class TestOllamaProvider:
         route = respx.post(f"{OLLAMA}/api/chat").mock(
             return_value=chat_response(json.dumps(report()))
         )
-        raw = await OllamaProvider(OLLAMA, "qwen2.5-coder:7b").investigate(request())
+        raw = await OllamaProvider(OLLAMA, "qwen2.5-coder:3b").investigate(request())
         body = json.loads(route.calls.last.request.content)
-        assert body["model"] == "qwen2.5-coder:7b"
+        assert body["model"] == "qwen2.5-coder:3b"
         assert body["stream"] is False
         assert body["options"]["temperature"] == 0
         assert body["format"]["required"] == ["summary", "suspected_root_cause"]
