@@ -1,0 +1,32 @@
+# Release catalogue: the actuator's allowlist.
+# Only versions and config revisions listed here can ever run. Callers select them by
+# name; they can never supply images, commands, mounts or arbitrary environment.
+services:
+  shop-api:
+    image_repository: sentinel/shop-api
+    port: 8000
+    min_replicas: 1
+    max_replicas: 3
+    resources:
+      memory_mb: 256
+      cpus: 0.5
+      pids: 128
+    initial:
+      version: "1.0.0"
+      config_revision: r1
+      replicas: 2
+    releases:
+      "1.0.0":
+        image_tag: "1.0.0"
+        notes: Known-good release.
+      "1.1.0":
+        image_tag: "1.1.0"
+        notes: >-
+          Demo scenario B. Ships a bad price migration that nulls prices for
+          products 6-10, so checkout raises TypeError.
+    config_revisions:
+      r1:
+        POOL_SIZE: "10"
+      r2:
+        # Demo scenario C. Invalid pool size; the service fails startup validation.
+        POOL_SIZE: "0"

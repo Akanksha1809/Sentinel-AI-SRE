@@ -1,0 +1,74 @@
+// Ship container logs to Loki.
+// Only containers labelled sentinel.logs=true are collected. Docker access goes
+// through the read-only socket proxy (GET container list/inspect/logs only).
+
+discovery.docker "containers" {
+  host             = "tcp://socket-proxy-ro:2375"
+  refresh_interval = "5s"
+
+  filter {
+    name   = "label"
+    values = ["sentinel.logs=true"]
+  }
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Container name without the leading slash.
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // service: the sentinel.service label for managed workloads, else the compose service.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_sentinel_service"]
+    regex         = "(.+)"
+    target_label  = "service"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_sentinel_version"]
+    target_label  = "version"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_sentinel_config_revision"]
+    target_label  = "config_revision"
+  }
+  rule {
+    source_labels = ["__meta_docker_container_label_sentinel_replica"]
+    target_label  = "replica"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "tcp://socket-proxy-ro:2375"
+  targets          = discovery.docker.containers.targets
+  relabel_rules    = discovery.relabel.containers.rules
+  refresh_interval = "5s"
+  forward_to       = [loki.process.json.receiver]
+}
+
+// Promote the JSON `level` field to a label (low cardinality). Everything else
+// stays in the log line so LogQL `| json` can query it.
+loki.process "json" {
+  stage.json {
+    expressions = { level = "level" }
+  }
+  stage.labels {
+    values = { level = "" }
+  }
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+  external_labels = { environment = "local" }
+}

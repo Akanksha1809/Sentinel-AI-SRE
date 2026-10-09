@@ -1,0 +1,106 @@
+# Alert rules. Each alert carries the labels Sentinel uses for grouping
+# (service, severity) and annotations that link to the runbook and dashboard.
+groups:
+  - name: shop-api
+    rules:
+      - alert: ShopApiHighErrorBurnRate
+        # Multi-window burn rate: both the short and long windows burn more than 10x
+        # the 0.5% budget. The short window makes the alert fast; the long window
+        # keeps it from flapping.
+        expr: |
+          service:http_error_ratio:rate30s > 0.05
+            and service:http_error_ratio:rate2m > 0.05
+        for: 30s
+        labels:
+          severity: critical
+          slo: availability
+        annotations:
+          summary: "{{ $labels.service }} is burning its error budget"
+          description: >-
+            Error ratio is {{ $value | humanizePercentage }} (30s window),
+            more than 10x the 0.5% error budget.
+          runbook_url: http://localhost:8080/runbooks/rollback-deployment
+          dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+      - alert: ShopApiHighLatency
+        expr: service:http_latency_p95:rate1m > 0.3
+        for: 1m
+        labels:
+          severity: warning
+          slo: latency
+        annotations:
+          summary: "{{ $labels.service }} p95 latency above 300ms"
+          description: "p95 latency is {{ $value | humanizeDuration }}."
+          dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+      - alert: ShopApiMemoryPressure
+        expr: service:container_memory_ratio:max > 0.8
+        for: 30s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} container memory above 80% of limit"
+          description: "Highest replica is at {{ $value | humanizePercentage }} of its memory limit."
+          runbook_url: http://localhost:8080/runbooks/restart-service
+          dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+      - alert: ShopApiHighCPU
+        expr: service:container_cpu_ratio:max > 0.9
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.service }} CPU above 90% of quota"
+          description: "Highest replica is at {{ $value | humanizePercentage }} of its CPU quota."
+          dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+      - alert: ShopApiCrashLooping
+        expr: service:container_restarts:increase2m >= 2
+        for: 10s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} containers are restarting repeatedly"
+          description: "{{ printf \"%.0f\" $value }} restarts in the last 2 minutes."
+          runbook_url: http://localhost:8080/runbooks/rollback-deployment
+          dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+      - alert: ShopApiReplicasUnavailable
+        expr: service:replicas_running:sum < on (service) fleet_desired_replicas
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} has fewer running replicas than desired"
+          description: "{{ $value }} replicas running."
+          dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+      - alert: ShopApiDown
+        expr: absent(up{job="shop-api"} == 1)
+        for: 30s
+        labels:
+          severity: critical
+          service: shop-api
+        annotations:
+          summary: "No shop-api replica is serving"
+          description: "No shop-api target is up in Prometheus."
+          dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+  - name: platform
+    rules:
+      - alert: MonitoringTargetDown
+        expr: up{job!="shop-api"} == 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Scrape target {{ $labels.job }} ({{ $labels.instance }}) is down"
+
+      - alert: ActuatorFleetStateStale
+        expr: fleet_observation_age_seconds > 30
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Actuator has not refreshed fleet state for {{ $labels.service }}"
+          description: "Fleet observation is {{ $value | humanizeDuration }} old."

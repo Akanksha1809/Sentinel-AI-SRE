@@ -1,7 +1,7 @@
 # Sentinel — Architecture
 
-> Status: **Phase 1 design**. Nothing described here is implemented yet unless
-> `PROJECT_STATUS.md` says so.
+> Status: Phase 2 implemented (target system + monitoring stack). Sentinel's own API and
+> worker (Phases 3+) are still design; see `PROJECT_STATUS.md` for what is built and verified.
 
 Sentinel is an AI-assisted SRE incident response platform. It detects incidents
 from real alert signals, collects evidence from metrics, logs and change history,
@@ -83,7 +83,8 @@ flowchart LR
     end
 
     ACT["Actuator<br/>(least-privilege fleet agent)"]
-    DSP_RW["docker-socket-proxy<br/>(containers API only)"]
+    GUARD["docker-guard<br/>(admission controller)"]
+    DSP_RW["socket-proxy rw<br/>(path allowlist)"]
     DSP_RO["docker-socket-proxy<br/>(read-only)"]
     OLL["Ollama (host, optional)"]
     HUMAN((On-call engineer))
@@ -103,7 +104,7 @@ flowchart LR
     WORK -- "templated LogQL" --> LOKI
     WORK -- "structured JSON, no tools" --> OLL
     WORK -- "allowlisted action (token)" --> ACT
-    ACT --> DSP_RW
+    ACT --> GUARD --> DSP_RW
     HUMAN -- "view / ack / approve" --> API
     HUMAN --> GRAF
 ```
@@ -112,7 +113,7 @@ flowchart LR
 
 1. **Untrusted data plane**: alert payloads, log lines, metric label values, and LLM output.
 2. **Sentinel control plane**: API, worker, and Postgres. It holds no Docker or cluster credentials.
-3. **Actuator**: the only component that can change running workloads. It reaches Docker only through a socket proxy and validates every request again on its own side.
+3. **Actuator**: the only component that can change running workloads. It reaches Docker through two filters in series: `docker-guard` (validates container-create bodies; refuses to touch unmanaged containers) and `socket-proxy-rw` (regex path allowlist, no host bind mounts). It is never on the same network as the proxy.
 4. **Host**: no service mounts the raw Docker socket except the two socket proxies. Demo containers get no host paths, run with memory/CPU/PID limits, drop all capabilities, and use read-only root filesystems where practical.
 
 ---
@@ -124,8 +125,9 @@ flowchart LR
 | **shop-api** (`services/demo-app`) | Small FastAPI "checkout" service. Emits RED metrics, process metrics, and JSON logs. Has deterministic fault modes (memory pressure, broken release, crash on start) | — | Internal network only. Chaos endpoints require a token and take bounded parameters |
 | **loadgen** (`services/loadgen`) | Fixed-rate, seeded request mix against `shop-api` (Docker DNS round-robin across replicas) | shop-api | none |
 | **Actuator** (`services/actuator`) | Owns the demo "fleet": deploy a version, restart, scale (1..N). Exposes `http_sd` targets to Prometheus, fleet metrics (restart count, container memory/limit, deployed version), and emits deployment events to Sentinel | docker-socket-proxy (rw), Sentinel `/api/v1/deployments` | Only acts on containers labelled `sentinel.managed=true`. Creates containers from a **fixed in-code template** (no user-supplied mounts, image, or command). Image tag comes from an allowlisted release catalogue |
-| **docker-socket-proxy (rw)** | Restricts the Docker API to container endpoints | Docker socket | Only reachable from the actuator network |
-| **docker-socket-proxy (ro)** | GET-only container list/logs for Alloy | Docker socket | Only reachable from Alloy |
+| **docker-guard** (`actuator.guard`) | Admission controller: allowlist validation of `containers/create` bodies (image pattern, no privileged/mounts/devices/caps/host namespaces/ports, mandatory hardening + limits, env/network allowlists); server-side `sentinel.managed` check before stop/restart/kill/delete | socket-proxy-rw | No socket. Non-root, read-only rootfs. Added after a live probe showed path filtering alone admits privileged containers |
+| **socket-proxy-rw** (`wollomatic/socket-proxy`) | Regex path allowlist: container create/start/stop/restart/delete/inspect/stats, image inspect; host bind mounts disabled | Docker socket | `allowfrom=docker-guard`, internal network shared only with the guard |
+| **socket-proxy-ro** | GET-only container list/inspect/logs + network list for Alloy | Docker socket | `allowfrom=alloy`, internal network |
 | **Prometheus** | Scraping, recording rules (SLIs, SLO burn rates), alert rules | targets, Alertmanager | — |
 | **Alertmanager** | Grouping, inhibition, and webhook delivery to Sentinel with a bearer token from `credentials_file` | Sentinel | — |
 | **Loki + Alloy** | Centralised logs, labelled by `service`, `version`, `container` | — | — |
@@ -197,7 +199,7 @@ sequenceDiagram
 |---|---|---|---|
 | D1 | The LLM has **no tools**. It returns a schema-validated report that can only *reference* runbook IDs from the catalogue it was given | Removes the whole class of "model executes something". Prompt injection can at worst produce a wrong suggestion, and a human still approves it | Tool-calling agent with shell/Docker (forbidden); LLM-authored PromQL (SSRF/DoS risk, harder to test) |
 | D2 | Evidence queries are **code-owned templates** with validated label values (`^[a-zA-Z0-9_\-:.]{1,64}$`) | Deterministic, testable, safe against query injection | Free-form queries |
-| D3 | A separate **Actuator** service holds workload privileges, behind a socket proxy | Sentinel compromise ≠ Docker compromise. Defence in depth: the actuator re-validates the allowlist and bounds | Mounting the Docker socket into Sentinel |
+| D3 | A separate **Actuator** service holds workload privileges, behind docker-guard + a path-allowlisting socket proxy | Sentinel compromise ≠ Docker compromise. Three independent checks: actuator catalogue/bounds, guard body/target validation, proxy path allowlist | Mounting the Docker socket into Sentinel; path-only proxy (live probe showed it admits privileged containers) |
 | D4 | Policy engine, approval, and idempotency keys on every action. **Dry-run is the default execution mode** | Safe by default. Live mode is an explicit opt-in (`SENTINEL_EXECUTION_MODE=live`) | — |
 | D5 | Recovery = **all** verification criteria pass for K consecutive samples over a window, using measured values that are stored | Recovery is never reported without signals | Trusting the action's return code, or alert-resolved alone |
 | D6 | Audit log is append-only: a DB trigger blocks UPDATE/DELETE, and a SHA-256 hash chain gives tamper evidence, checked by `GET /api/v1/audit/verify` | Tamper evidence within the scope of a demo | External WORM storage (noted as a prod extension) |
@@ -313,13 +315,30 @@ All external clients (Prometheus, Loki, Ollama, Actuator, clock, ID generator) a
 | postgres | 256 MB |
 | prometheus | 384 MB |
 | loki | 256 MB |
-| alloy | 128 MB |
-| grafana | 256 MB |
+| alloy | 192 MB |
+| grafana | 384 MB |
 | alertmanager | 64 MB |
 | sentinel-api / worker | 256 MB each |
 | actuator | 128 MB |
 | shop-api ×1–3 | 256 MB each |
-| loadgen, 2× socket proxy | 64 + 2×32 MB |
-| **Total (3 replicas)** | **≈ 2.9 GB worst case, ≈ 2.3 GB typical** |
+| loadgen, docker-guard, 2× socket proxy | 64 + 96 + 2×32 MB |
+| **Total (3 replicas)** | **≈ 3.3 GB worst case (sum of limits); measured 796 MiB actual use with 2 replicas (2026-10-09)** |
 
 Colima has 8 GiB, and about 4 GB of that is already used by the Jenkins and kind containers. The stack fits, but with Ollama's 7B model (about 5 GB on the host) the machine will swap. The README will document three options: run with the mock provider; pause the other project's containers yourself; or use a smaller model such as a 3B model. Pulling a smaller model is a download that needs your approval.
+
+---
+
+## 10. Measured scenario timings (Phase 2, 2026-10-09)
+
+The actuator was driven directly; Sentinel automation arrives in Phases 3–6.
+
+| Scenario | Fault injected | Alert reached Alertmanager | Remediation (actuator API) | All alerts cleared |
+|---|---|---|---|---|
+| A memory pressure | 11:20:08 | `ShopApiMemoryPressure` 11:21:37 (+89s), memory plateaued at 81% of limit, no OOM | rolling restart 11:21:54–11:22:06 | 11:22:22 |
+| B broken release 1.1.0 | 11:22:30 | `ShopApiHighErrorBurnRate` 11:23:42 (+72s), error ratio 19.93% | rollback to 1.0.0, 11:24:09–11:24:18 (repeat call was a no-op) | 11:24:46 |
+| C bad config r2 | 11:24:56 | `ShopApiCrashLooping` 11:25:27 (+31s), `ShopApiDown` 11:25:32 | rollback to config r1, 11:26:04–11:26:11 | 11:26:27 |
+
+Observation that affects Phase 6: the rolling restart caused 16 connection errors at the
+load generator, about 0.9% of 3 minutes of traffic. Docker DNS round-robin keeps
+returning a replica while it restarts. Recovery verification must therefore start its
+observation window *after* the action completes, with a short settle delay.

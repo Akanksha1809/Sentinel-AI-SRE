@@ -34,7 +34,7 @@ Scope: local Docker Compose deployment plus the optional Kubernetes backend. Eac
 | T5 | Unauthorised approval or execution | UI/API | RBAC roles `viewer < responder < approver < admin`. Tokens are stored as SHA-256 hashes. UI sessions use a signed HttpOnly SameSite=Strict cookie plus a CSRF token. Optional four-eyes rule (requester ≠ approver). Approvals bind to the exact `action_request_id`, parameter hash, and runbook content hash, and expire after 15 min | 6, 7 | API tests for every role × endpoint; replayed/expired/mismatched approvals rejected |
 | T6 | Parameter tampering (scale to 1000, rollback to an arbitrary image) | API → executor → actuator | The runbook parameter schema bounds values (replicas 1..3). The target version must be in the actuator's release catalogue. The actuator re-validates independently (defence in depth) | 6 | Property-style tests over parameter space |
 | T7 | Query injection / SSRF via label values in PromQL/LogQL | Evidence collector | Code-owned templates only. Label values are validated against a strict regex and escaped. Prometheus and Loki base URLs come from config only. Responses are size-capped | 4 | Unit tests with hostile label values |
-| T8 | **Docker socket exposure** | Actuator, Alloy | Socket mounted **only** into two `docker-socket-proxy` instances: rw for containers only (no exec, images build, volumes, swarm, system), and ro (GET) for Alloy. Each proxy sits on a dedicated internal network. The actuator only touches `sentinel.managed=true` containers and builds containers from a fixed template with no host mounts | 2 | Compose config test asserts no service but the proxies mounts `/var/run/docker.sock`; actuator tests reject unmanaged containers |
+| T8 | **Docker socket exposure** | Actuator, Alloy | Socket mounted **only** into two `wollomatic/socket-proxy` instances with regex path allowlists, on dedicated internal networks: rw (container create/start/stop/restart/delete/inspect/stats only; host bind mounts disabled) and ro (GET list/inspect/logs/networks for Alloy). **The actuator never reaches the rw proxy directly**: it goes through `docker-guard`, an admission controller that validates every `containers/create` body against a strict allowlist (allowlisted image pattern, no privileged/binds/mounts/devices/cap-add/host namespaces/ports/sysctls/custom cmd or user, mandatory cap-drop ALL + no-new-privileges + read-only rootfs + memory/CPU/PID limits, allowlisted env keys and networks) and checks `sentinel.managed=true` server-side before any stop/restart/kill/delete | 2 | `services/actuator/tests/test_guard.py` (33 attack variants against the real actuator-generated body); `tests/policy/test_compose_policy.py`; **live probe 2026-10-09** (see below) |
 | T9 | Simulated incident damages the host | Demo app chaos | Memory chaos is capped below the container `mem_limit`, and the limits are enforced by the cgroup. CPU chaos is bounded by `cpus: 0.5`, plus a `pids_limit`. No host mounts, `cap_drop: ALL`, `no-new-privileges`, read-only rootfs with tmpfs. Chaos endpoints are on the internal network only and require a token. Every chaos mode has a maximum duration and auto-expires | 2 | Unit tests for bounds; Compose policy test |
 | T10 | Destructive repeat execution / flapping | Executor | Idempotency key `(incident, runbook, params_hash)`. Per-service Postgres advisory lock. Cooldown (default 5 min) and rate limit (at most 3 actions/service/hour). Bounded retries only for retry-safe errors | 6 | Unit + integration tests |
 | T11 | False recovery claim | Verifier | Recovery needs all criteria to pass for K consecutive samples, with the measured values stored. A missing or empty query result counts as a **failure**, never as a pass | 6 | Tests: empty Prometheus result → not recovered |
@@ -50,6 +50,23 @@ Scope: local Docker Compose deployment plus the optional Kubernetes backend. Eac
 ## Residual risks (accepted for a local portfolio deployment)
 
 - A Postgres superuser can still rewrite the audit table and recompute the chain. Production would anchor chain heads externally (WORM/object lock).
-- The rw socket proxy still permits container create. A fully compromised actuator could start a container with host mounts, because the proxy cannot filter request bodies. This is mitigated by the actuator being small, non-root, and on an isolated network. Production would use the K8s backend with RBAC, or an OPA/authz plugin.
+- ~~A compromised actuator could create a privileged container or stop unrelated containers through the path-only proxy.~~ **Confirmed by live probe, then closed by `docker-guard`** (2026-10-09). Remaining: the guard and proxy are software filters, not a kernel boundary. A compromised *guard* process could bypass them. It is small, has no socket mount, and runs non-root, read-only, with all capabilities dropped. Production would use the Kubernetes backend with RBAC, or a Docker authorization plugin.
 - Single-user local auth. There is no SSO.
 - LLM quality: hypotheses can be wrong. That is why they are labelled, cite evidence, and never authorise anything.
+
+## Verification log
+
+### 2026-10-09: live boundary probe (Phase 2)
+Run from inside the actuator container with the Docker SDK, playing a compromised actuator:
+
+| Attempt | Path-only proxy | With docker-guard |
+|---|---|---|
+| list / inspect containers | allowed (needed) | allowed (needed) |
+| exec into a replica | blocked | blocked |
+| create container with `/` bind mount | blocked | blocked |
+| **create privileged container** | **ALLOWED (gap)** | blocked |
+| **stop an unrelated container (Jenkins)** | path permitted (gap) | blocked |
+| pull image / list images / create network / create volume / `info` / logs | blocked | blocked |
+| reach the rw proxy directly, bypassing the guard | n/a | impossible (not on that network) |
+
+The privileged container the first probe created (never started) was removed immediately.

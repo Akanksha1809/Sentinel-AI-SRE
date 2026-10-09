@@ -1,0 +1,70 @@
+[project]
+name = "sentinel"
+version = "0.1.0"
+description = "AI-assisted SRE incident response platform"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.12.24,<0.13"]
+build-backend = "uv_build"
+
+[tool.uv.workspace]
+members = ["services/demo-app", "services/actuator", "services/loadgen"]
+
+[dependency-groups]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "respx==0.23.1",
+    "ruff==0.16.10",
+    "mypy==2.4.0",
+    "bandit==1.9.4",
+    "pip-audit==2.10.1",
+    "pyyaml>=6.0.3",
+    "types-pyyaml",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=importlib -ra --strict-markers"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = [
+    "tests",
+    "services/demo-app/tests",
+    "services/actuator/tests",
+    "services/loadgen/tests",
+]
+markers = [
+    "unit: fast tests with no external dependencies",
+    "integration: needs Docker (testcontainers or the compose stack)",
+    "e2e: needs the full compose stack running",
+    "ollama: needs a reachable local Ollama server",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "services/*/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "S", "ASYNC", "RUF", "SIM", "PT", "N"]
+ignore = ["S101"]  # assert is fine in tests; production code uses explicit exceptions
+
+[tool.ruff.lint.per-file-ignores]
+"**/tests/**" = ["S105", "S106", "S108"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+mypy_path = ["src", "services/demo-app/src", "services/actuator/src", "services/loadgen/src"]
+explicit_package_bases = true
+
+[[tool.mypy.overrides]]
+module = ["docker", "docker.*"]
+ignore_missing_imports = true
+
+[tool.bandit]
+exclude_dirs = ["tests", ".venv"]

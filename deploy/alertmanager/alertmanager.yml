@@ -1,0 +1,33 @@
+# Alertmanager: groups alerts per service and delivers them to Sentinel's webhook.
+# The bearer token is read from a Compose secret file; it never appears in config.
+global:
+  resolve_timeout: 2m
+
+route:
+  receiver: sentinel
+  group_by: [alertname, service]
+  group_wait: 10s
+  group_interval: 30s
+  repeat_interval: 1h
+
+receivers:
+  - name: sentinel
+    webhook_configs:
+      - url: http://sentinel-api:8080/api/v1/webhooks/alertmanager
+        send_resolved: true
+        max_alerts: 50
+        timeout: 10s
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /run/secrets/alertmanager_webhook_token
+
+inhibit_rules:
+  # When nothing is serving, the narrower symptoms are noise.
+  - source_matchers: [alertname = ShopApiDown]
+    target_matchers: [alertname =~ "ShopApiHighErrorBurnRate|ShopApiHighLatency|ShopApiReplicasUnavailable"]
+    equal: [service]
+  # A crash loop explains missing replicas.
+  - source_matchers: [alertname = ShopApiCrashLooping]
+    target_matchers: [alertname = ShopApiReplicasUnavailable]
+    equal: [service]

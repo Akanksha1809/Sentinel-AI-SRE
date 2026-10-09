@@ -1,0 +1,65 @@
+# Service level indicators (SLIs) and SLO burn rates.
+# SLOs (demo): availability 99.5% (error budget 0.5%); p95 latency < 300ms.
+# Every error-ratio rule uses `or ... * 0`, so a healthy service records an explicit 0
+# instead of no series. "No data" must never be mistaken for "healthy".
+groups:
+  - name: sli
+    interval: 5s
+    rules:
+      - record: service:http_requests:rate30s
+        expr: sum by (service) (rate(http_requests_total{job="shop-api"}[30s]))
+
+      - record: service:http_errors:rate30s
+        expr: |
+          sum by (service) (rate(http_requests_total{job="shop-api", code=~"5.."}[30s]))
+            or service:http_requests:rate30s * 0
+
+      - record: service:http_error_ratio:rate30s
+        expr: service:http_errors:rate30s / service:http_requests:rate30s
+
+      - record: service:http_error_ratio:rate2m
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{job="shop-api", code=~"5.."}[2m]))
+              or sum by (service) (rate(http_requests_total{job="shop-api"}[2m])) * 0
+          )
+          / sum by (service) (rate(http_requests_total{job="shop-api"}[2m]))
+
+      - record: service:http_error_ratio:rate1h
+        expr: |
+          (
+            sum by (service) (rate(http_requests_total{job="shop-api", code=~"5.."}[1h]))
+              or sum by (service) (rate(http_requests_total{job="shop-api"}[1h])) * 0
+          )
+          / sum by (service) (rate(http_requests_total{job="shop-api"}[1h]))
+
+      - record: service:slo_burn_rate:rate30s
+        expr: service:http_error_ratio:rate30s / 0.005
+
+      - record: service:http_latency_p95:rate1m
+        expr: |
+          histogram_quantile(0.95,
+            sum by (service, le) (rate(http_request_duration_seconds_bucket{job="shop-api"}[1m])))
+
+  - name: saturation
+    interval: 5s
+    rules:
+      - record: service:container_memory_ratio:max
+        expr: |
+          max by (service) (
+            fleet_container_memory_usage_bytes / fleet_container_memory_limit_bytes
+          )
+
+      - record: service:container_cpu_ratio:max
+        expr: |
+          max by (service) (
+            rate(fleet_container_cpu_usage_seconds_total[1m]) / fleet_container_cpu_limit_cores
+          )
+
+      - record: service:replicas_running:sum
+        expr: sum by (service) (fleet_container_running)
+
+      # Restart counts are gauges that reset when a container is recreated. Negative
+      # deltas (from a recreate) are clamped so they don't cancel out real restarts.
+      - record: service:container_restarts:increase2m
+        expr: sum by (service) (clamp_min(delta(fleet_container_restart_count[2m]), 0))

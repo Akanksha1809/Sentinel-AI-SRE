@@ -1,0 +1,332 @@
+# Sentinel local stack.
+#   make secrets && make images && make up
+# Security invariants (enforced by tests/policy/test_compose_policy.py):
+#   - only the two socket-proxy services mount the Docker socket
+#   - the actuator reaches Docker only via docker-guard -> socket-proxy-rw
+#   - every service has a memory limit, drops all capabilities, sets no-new-privileges
+#   - host ports bind to 127.0.0.1 only
+#   - images are pinned to exact versions
+name: sentinel
+
+x-hardening: &hardening
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "2" }
+
+x-loggable: &loggable
+  sentinel.logs: "true"
+
+services:
+  # ---------------------------------------------------------------- docker access
+  socket-proxy-rw:
+    <<: *hardening
+    image: wollomatic/socket-proxy:1.13.1
+    user: "65534:991"  # nobody + the VM's docker socket group (see docs/troubleshooting.md)
+    read_only: true
+    mem_limit: 32m
+    command:
+      - "-loglevel=info"
+      - "-listenip=0.0.0.0"
+      - "-allowfrom=docker-guard"
+      - "-allowhealthcheck"
+      - "-watchdoginterval=300"
+      - "-stoponwatchdog"
+      - "-shutdowngracetime=5"
+      # No host bind mounts can be created through this proxy.
+      - "-allowbindmountfrom=/nonexistent/sentinel-no-host-mounts"
+      - "-allowGET=^(/v1\\.[0-9]+)?/(version|_ping|containers/json|containers/[a-zA-Z0-9_.-]+/(json|stats)|images/[a-zA-Z0-9_./:-]+/json)$$"
+      - "-allowHEAD=^(/v1\\.[0-9]+)?/_ping$$"
+      - "-allowPOST=^(/v1\\.[0-9]+)?/containers/(create|[a-zA-Z0-9_.-]+/(start|stop|restart))$$"
+      - "-allowDELETE=^(/v1\\.[0-9]+)?/containers/[a-zA-Z0-9_.-]+$$"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-rw]
+    healthcheck:
+      test: ["CMD", "./healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  socket-proxy-ro:
+    <<: *hardening
+    image: wollomatic/socket-proxy:1.13.1
+    user: "65534:991"
+    read_only: true
+    mem_limit: 32m
+    command:
+      - "-loglevel=info"
+      - "-listenip=0.0.0.0"
+      - "-allowfrom=alloy"
+      - "-allowhealthcheck"
+      - "-watchdoginterval=300"
+      - "-stoponwatchdog"
+      - "-shutdowngracetime=5"
+      - "-allowGET=^(/v1\\.[0-9]+)?/(version|_ping|info|events|networks|containers/json|containers/[a-zA-Z0-9_.-]+/(json|logs))$$"
+      - "-allowHEAD=^(/v1\\.[0-9]+)?/_ping$$"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-ro]
+    healthcheck:
+      test: ["CMD", "./healthcheck"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # Admission controller in front of socket-proxy-rw: validates container-create bodies
+  # (no privileged/mounts/devices/host namespaces...) and refuses to touch containers
+  # without sentinel.managed=true. See services/actuator/src/actuator/guard.py.
+  docker-guard:
+    <<: *hardening
+    image: sentinel/actuator:dev
+    command: ["python", "-m", "actuator.guard"]
+    read_only: true
+    mem_limit: 96m  # measured ~42MiB
+    labels: *loggable
+    environment:
+      GUARD_UPSTREAM: http://socket-proxy-rw:2375
+      HEALTHCHECK_URL: http://127.0.0.1:2375/_guard/healthz
+    networks: [docker-guard, docker-rw]
+    depends_on:
+      socket-proxy-rw: { condition: service_healthy }
+
+  # ---------------------------------------------------------------- target system
+  actuator:
+    <<: *hardening
+    image: sentinel/actuator:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/python-service.Dockerfile
+      args:
+        PACKAGE: sentinel-actuator
+        MODULE: actuator
+        HEALTHCHECK_URL: http://127.0.0.1:8080/healthz
+    read_only: true
+    mem_limit: 128m
+    labels: *loggable
+    environment:
+      ACTUATOR_DOCKER_HOST: tcp://docker-guard:2375
+      ACTUATOR_TARGET_NETWORK: sentinel-app
+      ACTUATOR_CATALOG_PATH: /etc/actuator/releases.yaml
+      ACTUATOR_POLL_INTERVAL_S: "5"
+      ACTUATOR_SENTINEL_DEPLOYMENTS_URL: ${SENTINEL_DEPLOYMENTS_URL:-}
+    secrets: [actuator_token, fault_token, chaos_token, deployer_token]
+    volumes:
+      - ../actuator/releases.yaml:/etc/actuator/releases.yaml:ro
+    ports: ["127.0.0.1:8085:8080"]
+    networks: [docker-guard, app]
+    depends_on:
+      docker-guard: { condition: service_healthy }
+
+  loadgen:
+    <<: *hardening
+    image: sentinel/loadgen:dev
+    build:
+      context: ../..
+      dockerfile: deploy/docker/python-service.Dockerfile
+      args:
+        PACKAGE: sentinel-loadgen
+        MODULE: loadgen
+        HEALTHCHECK_URL: http://127.0.0.1:9100/metrics
+    read_only: true
+    mem_limit: 64m
+    labels: *loggable
+    environment:
+      LOADGEN_TARGET: http://shop-api:8000
+      LOADGEN_RPS: "10"
+      LOADGEN_SEED: "1337"
+    networks: [app]
+    depends_on:
+      actuator: { condition: service_healthy }
+
+  # Build-only definitions for the two shop-api releases in the catalogue.
+  # The actuator runs these images; Compose never starts them (profile: images).
+  shop-api-1.0.0:
+    profiles: [images]
+    image: sentinel/shop-api:1.0.0
+    build:
+      context: ../..
+      dockerfile: deploy/docker/python-service.Dockerfile
+      args: { PACKAGE: shop-api, MODULE: shop_api, APP_VERSION: "1.0.0", RELEASE_DEFECT: none }
+  shop-api-1.1.0:
+    profiles: [images]
+    image: sentinel/shop-api:1.1.0
+    build:
+      context: ../..
+      dockerfile: deploy/docker/python-service.Dockerfile
+      args:
+        PACKAGE: shop-api
+        MODULE: shop_api
+        APP_VERSION: "1.1.0"
+        RELEASE_DEFECT: checkout_null_price
+
+  # ---------------------------------------------------------------- observability
+  prometheus:
+    <<: *hardening
+    image: prom/prometheus:v3.13.4
+    read_only: true
+    mem_limit: 384m
+    labels: *loggable
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - --web.listen-address=:9090
+    volumes:
+      - ../prometheus:/etc/prometheus:ro
+      - prometheus-data:/prometheus
+    ports: ["127.0.0.1:9090:9090"]
+    networks: [app, obs]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  alertmanager:
+    <<: *hardening
+    image: prom/alertmanager:v0.34.1
+    read_only: true
+    mem_limit: 64m
+    labels: *loggable
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --cluster.listen-address=
+    secrets: [alertmanager_webhook_token]
+    volumes:
+      - ../alertmanager:/etc/alertmanager:ro
+      - alertmanager-data:/alertmanager
+    ports: ["127.0.0.1:9093:9093"]
+    networks: [obs]
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9093/-/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  loki:
+    <<: *hardening
+    image: grafana/loki:3.7.8
+    read_only: true
+    mem_limit: 256m
+    command: ["-config.file=/etc/loki/loki.yml"]
+    volumes:
+      - ../loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki-data:/loki
+    ports: ["127.0.0.1:3100:3100"]
+    networks: [obs]
+    # No container healthcheck: the image is distroless (no shell, wget or curl).
+    # Readiness is checked from the host via http://127.0.0.1:3100/ready (make wait).
+
+  alloy:
+    <<: *hardening
+    image: grafana/alloy:v1.20.1
+    user: "473:473"
+    read_only: true
+    mem_limit: 192m  # measured ~100MiB
+    command:
+      - run
+      - /etc/alloy/config.alloy
+      - --storage.path=/var/lib/alloy/data
+      - --server.http.listen-addr=0.0.0.0:12345
+    volumes:
+      - ../alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy-data:/var/lib/alloy/data
+    ports: ["127.0.0.1:12345:12345"]
+    networks: [obs, docker-ro]
+    depends_on:
+      socket-proxy-ro: { condition: service_healthy }
+      loki: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345 && printf 'GET /-/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  grafana:
+    <<: *hardening
+    image: grafana/grafana:13.2.3
+    read_only: true
+    mem_limit: 384m  # measured ~230MiB idle
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PATHS_PROVISIONING: /etc/grafana/provisioning
+      GF_LOG_MODE: console
+      # Bundled plugins only: no runtime downloads (and the installer needs a writable rootfs).
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    secrets: [grafana_admin_password]
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana-dashboards:ro
+      - grafana-data:/var/lib/grafana
+    tmpfs: ["/tmp"]
+    ports: ["127.0.0.1:3000:3000"]
+    networks: [obs]
+    depends_on:
+      prometheus: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/api/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # ---------------------------------------------------------------- data
+  postgres:
+    <<: *hardening
+    image: postgres:18.6
+    # The entrypoint needs these to drop from root to the postgres user.
+    cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
+    mem_limit: 256m
+    labels: *loggable
+    environment:
+      POSTGRES_USER: sentinel_admin
+      POSTGRES_DB: sentinel
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sentinel_admin -d sentinel"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+networks:
+  app:
+    name: sentinel-app  # fixed name: the actuator attaches shop-api replicas here
+  obs: {}
+  data:
+    internal: true
+  docker-guard:
+    internal: true
+  docker-rw:
+    internal: true
+  docker-ro:
+    internal: true
+
+volumes:
+  prometheus-data: {}
+  alertmanager-data: {}
+  loki-data: {}
+  alloy-data: {}
+  grafana-data: {}
+  postgres-data: {}
+
+secrets:
+  postgres_password: { file: ../../secrets/postgres_password }
+  grafana_admin_password: { file: ../../secrets/grafana_admin_password }
+  alertmanager_webhook_token: { file: ../../secrets/alertmanager_webhook_token }
+  actuator_token: { file: ../../secrets/actuator_token }
+  fault_token: { file: ../../secrets/fault_token }
+  chaos_token: { file: ../../secrets/chaos_token }
+  deployer_token: { file: ../../secrets/deployer_token }

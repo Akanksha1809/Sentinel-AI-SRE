@@ -1,0 +1,127 @@
+# promtool unit tests for SLI recording rules and alerts.
+# Run: make check-monitoring  (uses the pinned prom/prometheus image)
+rule_files:
+  - ../rules/slo.yml
+  - ../rules/alerts.yml
+
+evaluation_interval: 5s
+
+tests:
+  # --- Healthy service: explicit zero error ratio, no alerts -------------------
+  - interval: 5s
+    input_series:
+      - series: 'http_requests_total{job="shop-api",service="shop-api",instance="r1",code="200",method="GET",route="/products"}'
+        values: '0+50x60'
+      - series: 'up{job="shop-api",service="shop-api",instance="r1"}'
+        values: '1x60'
+    promql_expr_test:
+      - expr: service:http_error_ratio:rate30s
+        eval_time: 2m
+        exp_samples:
+          - labels: 'service:http_error_ratio:rate30s{service="shop-api"}'
+            value: 0
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: ShopApiHighErrorBurnRate
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: ShopApiDown
+        exp_alerts: []
+
+  # --- Scenario B: broken release -> 20% errors from t=125s --------------------
+  - interval: 5s
+    input_series:
+      - series: 'http_requests_total{job="shop-api",service="shop-api",instance="r1",code="200",method="POST",route="/checkout"}'
+        values: '0+50x24 1240+40x75'
+      - series: 'http_requests_total{job="shop-api",service="shop-api",instance="r1",code="500",method="POST",route="/checkout"}'
+        values: '0x24 10+10x75'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ShopApiHighErrorBurnRate
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: ShopApiHighErrorBurnRate
+        exp_alerts:
+          - exp_labels:
+              service: shop-api
+              severity: critical
+              slo: availability
+            exp_annotations:
+              summary: "shop-api is burning its error budget"
+              description: "Error ratio is 20% (30s window), more than 10x the 0.5% error budget."
+              runbook_url: http://localhost:8080/runbooks/rollback-deployment
+              dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+  # --- Scenario A: memory climbs past 80% of a 256MiB limit -----------------
+  - interval: 5s
+    input_series:
+      - series: 'fleet_container_memory_usage_bytes{job="actuator",service="shop-api",replica="1"}'
+        values: '100000000+4000000x30 220000000x30'
+      - series: 'fleet_container_memory_limit_bytes{job="actuator",service="shop-api",replica="1"}'
+        values: '268435456x60'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ShopApiMemoryPressure
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: ShopApiMemoryPressure
+        exp_alerts:
+          - exp_labels:
+              service: shop-api
+              severity: warning
+            exp_annotations:
+              summary: "shop-api container memory above 80% of limit"
+              description: "Highest replica is at 81.96% of its memory limit."
+              runbook_url: http://localhost:8080/runbooks/restart-service
+              dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+  # --- Scenario C: restart counter climbing (crash loop) -----------------------
+  - interval: 5s
+    input_series:
+      - series: 'fleet_container_restart_count{job="actuator",service="shop-api",replica="1"}'
+        values: '0x12 1 1 2 2 3 3 4 4 5 5 6 6'
+    alert_rule_test:
+      - eval_time: 55s
+        alertname: ShopApiCrashLooping
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: ShopApiCrashLooping
+        exp_alerts:
+          - exp_labels:
+              service: shop-api
+              severity: critical
+            exp_annotations:
+              summary: "shop-api containers are restarting repeatedly"
+              description: "6 restarts in the last 2 minutes."
+              runbook_url: http://localhost:8080/runbooks/rollback-deployment
+              dashboard_url: http://localhost:3000/d/sentinel-shop-api
+
+  # --- A recreate (counter reset to 0) is not a crash loop ----------------
+  - interval: 5s
+    input_series:
+      - series: 'fleet_container_restart_count{job="actuator",service="shop-api",replica="1"}'
+        values: '5x12 0x24'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: ShopApiCrashLooping
+        exp_alerts: []
+
+  # --- All replicas gone -> ShopApiDown --------------------------------------
+  - interval: 5s
+    input_series:
+      - series: 'up{job="shop-api",service="shop-api",instance="r1"}'
+        values: '1x6 0x30'
+    alert_rule_test:
+      - eval_time: 50s
+        alertname: ShopApiDown
+        exp_alerts: []
+      - eval_time: 1m30s
+        alertname: ShopApiDown
+        exp_alerts:
+          - exp_labels:
+              service: shop-api
+              severity: critical
+            exp_annotations:
+              summary: "No shop-api replica is serving"
+              description: "No shop-api target is up in Prometheus."
+              dashboard_url: http://localhost:3000/d/sentinel-shop-api

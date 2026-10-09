@@ -1,0 +1,55 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: lint, types, unit & policy tests, security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7  # v10.2.0
+        with:
+          version: "0.12.24"
+          python-version: "3.12"
+      - name: Install
+        run: uv sync --all-packages --frozen
+      - name: Lint
+        run: make lint
+      - name: Type check (mypy --strict)
+        run: make typecheck
+      - name: Unit + policy tests
+        run: make test-unit
+      - name: Security (bandit, pip-audit)
+        run: make security
+
+  monitoring-config:
+    name: promtool & amtool
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Prometheus rules, rule unit tests, Alertmanager config
+        run: make check-monitoring
+
+  images:
+    name: build images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Generate throwaway secrets (compose validates secret paths)
+        run: ./scripts/gen-secrets.sh
+      - name: Build service and release images
+        run: docker compose -f deploy/compose/docker-compose.yml --profile images build

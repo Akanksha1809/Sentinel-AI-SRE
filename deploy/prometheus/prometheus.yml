@@ -1,0 +1,44 @@
+# Demo-tuned: 5s scrape/evaluation so a full scenario completes in minutes.
+global:
+  scrape_interval: 5s
+  scrape_timeout: 4s
+  evaluation_interval: 5s
+  external_labels:
+    environment: local
+
+rule_files:
+  - /etc/prometheus/rules/*.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # shop-api replicas are discovered from the actuator, so Prometheus needs no Docker access.
+  # Target labels: service, replica, version, config_revision.
+  - job_name: shop-api
+    http_sd_configs:
+      - url: http://actuator:8080/v1/sd/targets
+        refresh_interval: 5s
+
+  - job_name: actuator
+    static_configs: [{ targets: ["actuator:8080"] }]
+
+  - job_name: loadgen
+    static_configs: [{ targets: ["loadgen:9100"] }]
+
+  - job_name: prometheus
+    static_configs: [{ targets: ["localhost:9090"] }]
+
+  - job_name: alertmanager
+    static_configs: [{ targets: ["alertmanager:9093"] }]
+
+  - job_name: loki
+    static_configs: [{ targets: ["loki:3100"] }]
+
+  - job_name: alloy
+    static_configs: [{ targets: ["alloy:12345"] }]
+
+  - job_name: grafana
+    static_configs: [{ targets: ["grafana:3000"] }]

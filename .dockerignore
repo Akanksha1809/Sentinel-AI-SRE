@@ -1,0 +1,13 @@
+**/.venv
+**/__pycache__
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+.git
+secrets
+docs
+deploy
+tests
+**/tests
+*.md
+!README.md
