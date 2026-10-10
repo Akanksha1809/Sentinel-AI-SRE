@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import math
 from datetime import datetime
 from typing import Any, Protocol
 
@@ -88,7 +89,16 @@ def _parse_matrix(payload: Any) -> list[Series]:
     out: list[Series] = []
     for item in (data.get("result") or [])[:MAX_SERIES]:
         raw = item.get("values") or ([item["value"]] if "value" in item else [])
-        points = tuple(Point(float(ts), float(v)) for ts, v in raw[-MAX_POINTS_PER_SERIES:])
+        # Prometheus emits "NaN"/"+Inf"/"-Inf" for samples with no underlying data
+        # (e.g. histogram_quantile over an empty bucket). Postgres's JSON parser is
+        # stricter than Python's and rejects those tokens outright, so they are
+        # dropped here rather than failing evidence storage; a dropped point is
+        # exactly as informative as the "no data" gap it actually represents.
+        points = tuple(
+            Point(float(ts), float(v))
+            for ts, v in raw[-MAX_POINTS_PER_SERIES:]
+            if math.isfinite(float(v))
+        )
         out.append(Series({str(k): str(v) for k, v in (item.get("metric") or {}).items()}, points))
     return out
 

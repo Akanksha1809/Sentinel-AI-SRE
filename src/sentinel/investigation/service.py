@@ -33,6 +33,7 @@ from sentinel.investigation.validate import ReportValidationError, validate_repo
 from sentinel.observability.metrics import Metrics
 from sentinel.persistence.models import HypothesisRow, Incident, Investigation
 from sentinel.remediation.runbooks import RunbookCatalog
+from sentinel.remediation.service import ActionService
 
 log = structlog.get_logger("sentinel.investigation")
 
@@ -55,6 +56,7 @@ class InvestigationService:
         metrics: Metrics,
         *,
         timeout_s: float = 300.0,
+        actions: ActionService | None = None,
     ) -> None:
         self._sessions = sessions
         self._clock = clock
@@ -64,6 +66,7 @@ class InvestigationService:
         self._providers = providers
         self._metrics = metrics
         self._timeout_s = timeout_s
+        self._actions = actions
 
     def provider(self, name: str) -> InvestigationProvider:
         try:
@@ -210,6 +213,29 @@ class InvestigationService:
                     "dropped_citations": outcome.dropped_citations,
                 },
             )
+            if self._actions is not None:
+                for action in outcome.accepted_actions:
+                    try:
+                        await self._actions.propose(
+                            session,
+                            incident_id,
+                            action["runbook_id"],
+                            action["parameters"],
+                            source="ai_recommendation",
+                            requested_by=f"ai:{label}",
+                            investigation_id=inv_id,
+                            cited_evidence=action["cited_evidence"],
+                            rationale=action["rationale"],
+                        )
+                    except Exception:
+                        # Proposing is a courtesy, not the investigation's job: a policy
+                        # refusal (e.g. rate limit) must never fail the investigation itself.
+                        log.warning(
+                            "auto-propose failed",
+                            runbook_id=action["runbook_id"],
+                            incident_id=str(incident_id),
+                            exc_info=True,
+                        )
             incident = await self._incidents.get(session, incident_id)
             if incident.status in (IncidentStatus.OPEN.value, IncidentStatus.ACKNOWLEDGED.value):
                 await self._incidents.transition(

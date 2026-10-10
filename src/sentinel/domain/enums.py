@@ -75,3 +75,51 @@ class EventKind(StrEnum):
     INVESTIGATION_REQUESTED = "investigation.requested"
     INVESTIGATION_COMPLETED = "investigation.completed"
     INVESTIGATION_FAILED = "investigation.failed"
+    ACTION_PROPOSED = "action.proposed"
+    ACTION_APPROVED = "action.approved"
+    ACTION_REJECTED = "action.rejected"
+    ACTION_EXPIRED = "action.expired"
+    ACTION_EXECUTING = "action.executing"
+    ACTION_EXECUTED = "action.executed"
+    ACTION_EXECUTION_FAILED = "action.execution_failed"
+    ACTION_VERIFYING = "action.verifying"
+    ACTION_VERIFIED = "action.verified"
+    ACTION_VERIFICATION_FAILED = "action.verification_failed"
+
+
+class ActionStatus(StrEnum):
+    """Lifecycle of one proposed remediation. See domain/actions.py for transitions."""
+
+    PROPOSED = "proposed"
+    PENDING_APPROVAL = "pending_approval"
+    APPROVED = "approved"
+    EXECUTING = "executing"
+    VERIFYING = "verifying"
+    SUCCEEDED = "succeeded"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    FAILED = "failed"
+    VERIFICATION_FAILED = "verification_failed"
+    CANCELLED = "cancelled"
+
+    @property
+    def is_active(self) -> bool:
+        return self in (
+            ActionStatus.PROPOSED,
+            ActionStatus.PENDING_APPROVAL,
+            ActionStatus.APPROVED,
+            ActionStatus.EXECUTING,
+            ActionStatus.VERIFYING,
+        )
+
+
+class ApprovalDecision(StrEnum):
+    APPROVED = "approved"
+    REJECTED = "rejected"
+
+
+class ExecutionMode(StrEnum):
+    """Global safety switch. `dry_run` is the default; `live` is an explicit opt-in."""
+
+    DRY_RUN = "dry_run"
+    LIVE = "live"

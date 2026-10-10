@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from sentinel import __version__
 from sentinel.api import errors
-from sentinel.api.routes import admin, incidents, investigations, webhooks
+from sentinel.api.routes import actions, admin, incidents, investigations, webhooks
 from sentinel.container import Container
 from sentinel.domain.enums import Role
 from sentinel.observability.middleware import ObservabilityMiddleware
@@ -71,6 +71,7 @@ def create_app(container: Container, *, run_bootstrap: bool = True) -> FastAPI:
         admin.deployments,
         admin.audit,
         investigations.router,
+        actions.router,
     ):
         app.include_router(router)
     return app

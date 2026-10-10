@@ -90,3 +90,23 @@ your network). On Colima and Docker Desktop, containers reach the host loopback 
 `host.docker.internal`. Check with:
 `docker exec sentinel-sentinel-worker-1 python -c "import urllib.request;print(urllib.request.urlopen('http://host.docker.internal:11434/api/tags').read()[:100])"`.
 On a plain Linux Docker Engine, set `SENTINEL_OLLAMA_URL` to an address Ollama listens on.
+
+## Evidence collection fails with `invalid input syntax for type json: Token "NaN" is invalid`
+Prometheus returns the literal `"NaN"` (or `"+Inf"`/`"-Inf"`) for a sample with no real
+data behind it — most often `histogram_quantile` over a bucket with too few points.
+Python's `json` module happily serialises `float('nan')` back out as the bare token
+`NaN`, which is valid to *that* module but not standard JSON; Postgres's stricter JSON
+parser rejects it outright, failing evidence storage. Fixed in `evidence/clients.py`:
+non-finite points are dropped when a metric response is parsed, before they can reach
+storage. If you see this on an older build, update; there is no workaround short of that.
+
+## A verification check always reads "no data" / recovery never verifies
+If `replicas_ready_ratio` (or any check dividing two metrics) always shows no data,
+suspect a Prometheus vector-matching mismatch: dividing a recording rule's output
+(label set reduced by its `by (...)`) against a raw scrape (which still carries
+`job`/`instance`) needs an explicit `on(service)` — Prometheus's default one-to-one
+match requires *identical* label sets and otherwise silently returns nothing, for
+*every* sample, not just an occasional one. This exact bug shipped once in
+`remediation/verifier.py` and was fixed with `on(service)`; if you add a new
+verification signal that divides metrics from different sources, check its rendered
+query directly against `/api/v1/query` before trusting it in a runbook.

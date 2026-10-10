@@ -1,7 +1,8 @@
 # Sentinel — Architecture
 
-> Status: Phases 1–4 implemented (target system, monitoring, ingestion/incidents, evidence).
-> Investigation, remediation and UI (Phases 5–7) are still design; see `PROJECT_STATUS.md`.
+> Status: Phases 1–6 implemented (target system, monitoring, ingestion/incidents, evidence,
+> investigation, remediation). The dashboard UI and postmortems (Phase 7) are still design;
+> see `PROJECT_STATUS.md`.
 
 Sentinel is an AI-assisted SRE incident response platform. It detects incidents
 from real alert signals, collects evidence from metrics, logs and change history,
@@ -385,3 +386,37 @@ evidence collection ──(same transaction)──► job investigation.run ─�
 - **Focus.** When a new kind of alert joins, or an alert reopens an incident, evidence is anchored on that alert (onset, step detection, change correlation), and the incident is re-investigated. One service can have two distinct problems in one incident.
 - **Separation of observation and hypothesis.** This is in the schema (`evidence_items` vs `hypotheses.generated CHECK true`), the API (`label`, `generated`, `is_mock`) and the timeline (actor `ai:MOCK` / `ai:ollama:<model>`, text prefixed "[AI hypothesis …]").
 - **Networking.** Ollama runs on the host bound to 127.0.0.1. Containers reach it through `host.docker.internal` (Colima forwards it to the host loopback, verified), so Ollama is never exposed to the LAN.
+
+---
+
+## 13. Remediation: policy, approvals, execution, verification (Phase 6, as built)
+
+```
+accepted_actions (from Phase 5)         human propose
+         |                                    |
+         v                                    v
+  ActionService.propose  --(idempotent, rate-limited, policy decides initial status)-->
+         |
+   pending_approval  --approve (Approver)-->  approved  --[action.execute job]-->
+         |
+   ExecutionService.execute  --(lock row, call actuator, bounded internal retries;
+                                  terminal actuator error fails immediately, no retry)-->
+         |
+     verifying  --[action.verify job]-->
+         |
+   VerificationService.verify  --(settle_s wait, then sample checks every interval_s
+                                   for up to window_s; consecutive all-pass streak
+                                   required; a failed/empty query counts as a failed
+                                   sample)-->
+         |
+    succeeded (incident -> resolved, verified=true)  |  verification_failed (incident -> remediating;
+                                                        a fresh proposal is required — no auto-retry)
+```
+
+- **Approval is the only path to execution.** Every shipped runbook has `approval: required`; the policy engine's `policy_auto` path exists (and is tested) for a future runbook, gated by a cooldown per (runbook, service) and an incident-wide rate limit, with approval as the fallback whenever either rule would otherwise block.
+- **Idempotent by content, not by caller.** `idempotency_key = sha256(incident_id | runbook_id | canonical(parameters))`. The same proposal from any source (AI or human) reuses the existing active request; a partial unique index on `action_requests.idempotency_key` enforces this atomically. A *terminal* request (rejected/expired/failed/verification_failed) never blocks a fresh one with the same key.
+- **Replay protection.** Approval re-checks the runbook's current `sha256` against the one captured at proposal time. If the runbook file changed in between, approval is refused (`RunbookChangedError`, 409) and a fresh proposal is required — approving is "approve exactly this, as reviewed," never "approve whatever this id currently points to."
+- **Dry-run is the default execution mode.** `SENTINEL_EXECUTION_MODE=dry_run` (default) wraps the real `HttpActuatorClient` in `DryRunActuatorClient`, which forces every call's `dry_run=true`: the actuator is still called for real (so the plan reflects real fleet state) but nothing is ever changed. `live` is an explicit, operator-set opt-in.
+- **Execution safety.** The action row is locked (`with_for_update`) for the `approved`/`executing` window, so a redelivered job (worker crash + lease expiry) can't run concurrently with a fresh one. Retries are bounded and internal (actuator timeouts/connection errors/503 only); a terminal actuator error (unknown target, out of bounds, not managed) fails immediately. The actuator's own idempotency (Phase 2: repeating a rollback to the same target is a no-op the second time) makes a crash-then-redelivery safe even across process restarts.
+- **Verification never assumes recovery.** Checks are named signals (`error_ratio`, `latency_p95`, `memory_ratio`, `replicas_ready_ratio`, `restarts_in_window`), each a fixed PromQL template, never model- or user-supplied text. A query error or an empty result is a **failed** sample, not a skipped one. `restarts_in_window` uses `clamp_min(delta(...), 0)` so a container recreate (which resets the restart-count gauge to 0) is never mistaken for new restarts.
+- **Measured live** (see PROJECT_STATUS.md for the full run and the two real bugs it found): approve → execute → verify took under 3 minutes end to end, including a 20s settle and real Prometheus sampling; the first sample after settle still showed a residual error-rate blip from the in-flight restart and was correctly counted as a fail, with 4 clean samples after reaching the required streak.

@@ -68,15 +68,40 @@ class Settings(BaseSettings):
     ollama_num_ctx: int = Field(default=4096, ge=2048, le=32768)  # prompt is ~2.7k tokens
     prometheus_url: str = "http://localhost:9090"
 
+    # Remediation (Phase 6). `dry_run` is the default execution mode: the actuator is
+    # still called (so plans reflect real fleet state) but every call forces dry_run=true.
+    # `live` is an explicit opt-in that lets approved actions actually change the fleet.
+    actuator_base_url: str = "http://actuator:8080"
+    actuator_timeout_s: float = Field(default=30.0, gt=0, le=120)
+    execution_mode: Literal["dry_run", "live"] = "dry_run"
+    action_expiry_minutes: int = Field(default=30, ge=1, le=1440)
+    action_cooldown_s: int = Field(default=120, ge=0, le=3600)
+    action_max_per_incident: int = Field(default=20, ge=1, le=200)
+    action_execute_max_attempts: int = Field(default=3, ge=1, le=10)
+    action_sweep_interval_s: int = Field(default=30, ge=5, le=300)
+
     # Secrets (loaded by `load_settings`; may be injected directly in tests).
     db_password: SecretStr | None = None
     webhook_token: SecretStr | None = None
     deployer_token: SecretStr | None = None
     bootstrap_admin_token: SecretStr | None = None
+    actuator_token: SecretStr | None = None
 
     @property
     def reopen_window(self) -> timedelta:
         return timedelta(seconds=self.reopen_window_s)
+
+    @property
+    def action_expiry(self) -> timedelta:
+        return timedelta(minutes=self.action_expiry_minutes)
+
+    @property
+    def action_cooldown(self) -> timedelta:
+        return timedelta(seconds=self.action_cooldown_s)
+
+    @property
+    def dry_run_default(self) -> bool:
+        return self.execution_mode == "dry_run"
 
     def database_url(self) -> str:
         from sqlalchemy.engine import URL
@@ -97,6 +122,7 @@ SECRET_FILES = {  # nosec B105
     "webhook_token": "alertmanager_webhook_token",
     "deployer_token": "deployer_token",
     "bootstrap_admin_token": "sentinel_admin_token",
+    "actuator_token": "actuator_token",
 }
 
 

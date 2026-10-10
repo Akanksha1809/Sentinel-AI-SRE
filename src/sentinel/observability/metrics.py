@@ -70,4 +70,28 @@ class Metrics:
             registry=r,
             buckets=(0.01, 0.1, 1, 5, 15, 30, 60, 120, 240, 300),
         )
+        self.action_requests = Counter(
+            "sentinel_action_requests_total",
+            "Action requests by source and resulting status.",
+            ["source", "status"],
+            registry=r,
+        )
+        self.action_decisions = Counter(
+            "sentinel_action_decisions_total",
+            "Approve/reject decisions on action requests.",
+            ["decision"],
+            registry=r,
+        )
+        self.action_executions = Counter(
+            "sentinel_action_executions_total",
+            "Actuator execution attempts by outcome.",
+            ["outcome"],
+            registry=r,
+        )
+        self.verifications = Counter(
+            "sentinel_verifications_total",
+            "Recovery verifications by outcome.",
+            ["passed"],
+            registry=r,
+        )
         self.build = Gauge("sentinel_build_info", "Build info.", ["version"], registry=r)

@@ -350,3 +350,131 @@ class HypothesisRow(Base):
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence"),
         CheckConstraint("generated", name="generated"),
     )
+
+
+class ActionRequest(Base):
+    """A proposed remediation. Only ever instantiated from the runbook catalogue.
+
+    `idempotency_key` = sha256(runbook_id + sorted(parameters) + incident_id) and is
+    unique among active requests, so the same proposal (by any source) is reused rather
+    than duplicated. `params_sha256` / `runbook_sha256` are checked again at approval
+    time: if the runbook file changed since the proposal, approval is refused (replay
+    protection) and a fresh proposal is required.
+    """
+
+    __tablename__ = "action_requests"
+
+    id: Mapped[uuid.UUID] = _pk()
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="RESTRICT"), index=True
+    )
+    investigation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("investigations.id", ondelete="RESTRICT")
+    )
+    runbook_id: Mapped[str] = mapped_column(String(64))
+    runbook_version: Mapped[int] = mapped_column(Integer)
+    runbook_sha256: Mapped[str] = mapped_column(String(64))
+    action_type: Mapped[str] = mapped_column(String(20))  # restart | rollback | scale
+    parameters: Mapped[Json]
+    params_sha256: Mapped[str] = mapped_column(String(64))
+    idempotency_key: Mapped[str] = mapped_column(String(80))
+    status: Mapped[str] = mapped_column(String(20))
+    source: Mapped[str] = mapped_column(String(20))  # ai_recommendation | human | policy
+    rationale: Mapped[str] = mapped_column(Text, server_default=text("''"))
+    cited_evidence: Mapped[list[str]] = mapped_column(ARRAY(String(64)))
+    requested_by: Mapped[str] = mapped_column(String(120))
+    dry_run: Mapped[bool]
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+    expires_at: Mapped[datetime]
+
+    approvals: Mapped[list[Approval]] = relationship(
+        back_populates="action_request", order_by="Approval.decided_at"
+    )
+    executions: Mapped[list[ActionExecution]] = relationship(
+        back_populates="action_request", order_by="ActionExecution.attempt"
+    )
+    verifications: Mapped[list[Verification]] = relationship(
+        back_populates="action_request", order_by="Verification.started_at"
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_action_requests_active_idempotency_key",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=text(
+                "status IN ('proposed','pending_approval','approved','executing','verifying')"
+            ),
+        ),
+        Index("ix_action_requests_incident_id", "incident_id"),
+        CheckConstraint(
+            "status IN ('proposed','pending_approval','approved','executing','verifying',"
+            "'succeeded','rejected','expired','failed','verification_failed','cancelled')",
+            name="status",
+        ),
+        CheckConstraint("action_type IN ('restart','rollback','scale')", name="action_type"),
+    )
+
+
+class Approval(Base):
+    """One approve/reject decision. Binds the exact parameters and runbook content."""
+
+    __tablename__ = "approvals"
+
+    id: Mapped[uuid.UUID] = _pk()
+    action_request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("action_requests.id", ondelete="RESTRICT"), index=True
+    )
+    principal: Mapped[str] = mapped_column(String(120))
+    decision: Mapped[str] = mapped_column(String(10))
+    reason: Mapped[str | None] = mapped_column(Text)
+    params_sha256: Mapped[str] = mapped_column(String(64))
+    runbook_sha256: Mapped[str] = mapped_column(String(64))
+    decided_at: Mapped[datetime]
+
+    action_request: Mapped[ActionRequest] = relationship(back_populates="approvals")
+
+    __table_args__ = (CheckConstraint("decision IN ('approved','rejected')", name="decision"),)
+
+
+class ActionExecution(Base):
+    """One execution attempt against the actuator. One row per bounded retry."""
+
+    __tablename__ = "action_executions"
+
+    id: Mapped[uuid.UUID] = _pk()
+    action_request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("action_requests.id", ondelete="RESTRICT"), index=True
+    )
+    attempt: Mapped[int] = mapped_column(Integer)
+    started_at: Mapped[datetime]
+    finished_at: Mapped[datetime | None]
+    outcome: Mapped[str] = mapped_column(String(20))  # changed | noop | error
+    actuator_response: Mapped[Json | None]
+    error: Mapped[str | None] = mapped_column(Text)
+
+    action_request: Mapped[ActionRequest] = relationship(back_populates="executions")
+
+    __table_args__ = (
+        UniqueConstraint("action_request_id", "attempt", name="uq_action_executions_attempt"),
+        CheckConstraint("outcome IN ('changed','noop','error')", name="outcome"),
+    )
+
+
+class Verification(Base):
+    """Recovery verification for one action. `passed` is only ever set from measured samples."""
+
+    __tablename__ = "verifications"
+
+    id: Mapped[uuid.UUID] = _pk()
+    action_request_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("action_requests.id", ondelete="RESTRICT"), index=True
+    )
+    criteria: Mapped[Json]
+    samples: Mapped[list[Any]] = mapped_column(JSONB)  # one entry per sampling tick
+    passed: Mapped[bool | None]
+    started_at: Mapped[datetime]
+    finished_at: Mapped[datetime | None]
+
+    action_request: Mapped[ActionRequest] = relationship(back_populates="verifications")

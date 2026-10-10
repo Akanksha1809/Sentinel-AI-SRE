@@ -10,7 +10,7 @@ FastAPI generates the OpenAPI spec at `/api/v1/openapi.json`. The contract tests
 | Method | Path | Response |
 |---|---|---|
 | GET | `/healthz` | `200 {"status":"ok"}`. Liveness only, no dependencies checked |
-| GET | `/readyz` | `200/503 {"status":"ready"/"degraded", "checks":{"database":{ok,latency_ms},"migrations":{ok,head},"runbooks":{ok,count}}}`. Prometheus, Loki, and LLM are reported but **non-blocking** |
+| GET | `/readyz` | `200/503 {"status":"ready"/"not_ready", "checks":{"database":{ok,latency_ms},"migrations":{ok,current,expected}}}`. As implemented, only the database and migration head gate readiness; Prometheus/Loki/LLM/runbook-catalogue reachability are not (yet) separately reported |
 | GET | `/metrics` | Prometheus exposition (Sentinel self-metrics) |
 
 ## Ingestion
@@ -63,11 +63,12 @@ Server-side additions, which the model cannot set: `provider`, `model`, `generat
 |---|---|---|---|
 | GET | `/runbooks` | viewer | Catalogue: id, version, sha256, typed parameters, approval, verification checks |
 | GET | `/runbooks/{id}` | viewer | Full definition |
-| POST | `/incidents/{id}/actions` | responder | `{runbook_id, parameters, dry_run?}` → `201 ActionRequest` (status from the policy). `422` if parameters fail the schema |
-| GET | `/actions/{id}` | viewer | `ActionRequest` + approvals + executions + verifications |
-| POST | `/actions/{id}/approve` | approver | `{reason, params_sha256}`. Must match the current params hash, otherwise `409` |
-| POST | `/actions/{id}/reject` | approver | `{reason}` |
-| POST | `/actions/{id}/cancel` | responder | Only before `executing` |
+| POST | `/incidents/{ref}/actions` | responder | `{runbook_id, parameters, rationale?}` → `201 ActionRequest` (status from policy: `pending_approval` for every shipped runbook, since all require approval). `dry_run` is **not** client-settable; it is always bound from the server's `SENTINEL_EXECUTION_MODE` at proposal time. `422` if parameters fail the runbook's schema; idempotent by `(incident, runbook, parameters)` — a repeat returns the existing active request unchanged |
+| GET | `/incidents/{ref}/actions` | viewer | `ActionRequest[]`, newest first |
+| GET | `/actions/{id}` | viewer | `ActionRequest` + `approvals[]` + `executions[]` + `verifications[]` |
+| POST | `/actions/{id}/approve` | approver | `{reason?}`. Approves by id, not by resubmitted parameters — nothing for a client to mismatch. Refused with `409` if the action already expired, is in any other non-`pending_approval` state, or the runbook's content changed since proposal (`runbook_sha256` mismatch — a stale/replayed approval) |
+| POST | `/actions/{id}/reject` | approver | `{reason}` (required, min 3 chars) |
+| POST | `/actions/{id}/cancel` | responder | *Not yet implemented.* The domain state machine supports `cancelled` from any pre-execution state; no route exists yet to trigger it |
 
 ## Reports and audit
 

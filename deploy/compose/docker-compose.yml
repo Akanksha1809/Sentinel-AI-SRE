@@ -235,11 +235,16 @@ services:
       SENTINEL_OLLAMA_MODEL: ${SENTINEL_OLLAMA_MODEL:-qwen2.5-coder:3b}
       SENTINEL_OLLAMA_TIMEOUT_S: ${SENTINEL_OLLAMA_TIMEOUT_S:-240}
       SENTINEL_INVESTIGATION_TIMEOUT_S: ${SENTINEL_INVESTIGATION_TIMEOUT_S:-300}
+      # Remediation: dry_run is the safe default (the actuator is still called, but every
+      # call is forced dry_run=true). live is an explicit, operator-set opt-in.
+      SENTINEL_ACTUATOR_BASE_URL: http://actuator:8080
+      SENTINEL_EXECUTION_MODE: ${SENTINEL_EXECUTION_MODE:-dry_run}
       HEALTHCHECK_URL: http://127.0.0.1:9101/metrics
-    secrets: [sentinel_app_db_password]
-    networks: [data, obs]
+    secrets: [sentinel_app_db_password, actuator_token]
+    networks: [data, obs, app]
     depends_on:
       sentinel-migrate: { condition: service_completed_successfully }
+      actuator: { condition: service_healthy }
 
   # ---------------------------------------------------------------- observability
   prometheus:

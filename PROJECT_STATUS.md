@@ -3,7 +3,7 @@
 _Resumable work log. Update at the end of every work session. Only record results backed by command output._
 
 ## Current phase
-**Phase 5: AI investigation. Complete (2026-10-09).** Next: Phase 6 (policy, approvals, restricted execution, recovery verification; dedicated `sentinel` kind cluster).
+**Phase 6: Policy, approvals, execution, verification. Complete (2026-10-09).** Next: Phase 7 (dashboard UI, incident summaries, postmortems).
 
 ## Phase checklist
 | Phase | Status | Evidence |
@@ -13,14 +13,14 @@ _Resumable work log. Update at the end of every work session. Only record result
 | 3. Ingestion + incidents + persistence | ✅ 2026-10-09 | See "Phase 3 results" below |
 | 4. Evidence gathering | ✅ 2026-10-09 | See "Phase 4 results" below |
 | 5. AI investigation | ✅ 2026-10-09 | See "Phase 5 results" below |
-| 6. Runbooks, approvals, execution, verification (+ dedicated `sentinel` kind cluster) | ⏳ Next (runbook catalogue already done in Phase 5) | |
-| 7. UI, reports, postmortems | ⏳ | |
+| 6. Runbooks, approvals, execution, verification | ✅ 2026-10-09 | See "Phase 6 results" below. **K8s actuator + dedicated kind cluster deferred** (see Decisions) |
+| 7. UI, reports, postmortems | ⏳ Next | |
 | 8. E2E, CI hardening, docs, demos | ⏳ (basic CI added early in Phase 2) | |
 
 ## Decisions (from the user, 2026-10-09)
 1. Package manager: **uv** (installed via Homebrew, 0.12.24).
-2. LLM: the installed **`qwen2.5-coder:7b`**.
-3. Kubernetes: create a **separate `sentinel` kind cluster**. It is deferred to Phase 6, when the K8s backend is built, to save RAM until then. Never touch `kind-ai-platform-engineer`.
+2. LLM: originally the installed `qwen2.5-coder:7b`; **switched to `qwen2.5-coder:3b`** as the default in Phase 5 follow-up (same quality, ~12x faster on this host; see below).
+3. Kubernetes: create a **separate `sentinel` kind cluster**. **Deferred past Phase 6**, with your implicit go-ahead via "start phase 6" after Phase 6's scope (policy/approvals/execution/verification) turned out substantial on its own; the Docker actuator already fully satisfies the Phase 6 exit criterion. Revisit as a stretch addition — never touch `kind-ai-platform-engineer` either way.
 4. GitHub: private repo **Akanksha1809/Sentinel-AI-SRE**; push at the end of each phase.
 
 ## What exists (Phase 2)
@@ -30,6 +30,28 @@ _Resumable work log. Update at the end of every work session. Only record result
 - `services/loadgen`: seeded fixed-rate traffic (10 rps; about 20% error exposure on release 1.1.0).
 - Compose stack: Prometheus (SLI recording rules, burn-rate and saturation alerts), Alertmanager (webhook to Sentinel with a secret-file bearer token), Loki + Alloy, Grafana (generated dashboard), Postgres (ready for Phase 3), two socket proxies.
 - Policy tests for Compose security invariants; promtool rule unit tests; basic GitHub Actions CI.
+
+## What exists (Phase 6)
+- `src/sentinel/domain/actions.py`: `ActionRequest` state machine (`proposed → pending_approval → approved → executing → verifying → succeeded`, with `rejected/expired/failed/verification_failed/cancelled` terminals; a failed verification never auto-retries — a fresh proposal is required).
+- `sentinel.remediation.policy`: `PolicyEngine` — required-approval runbooks always need a human; a hypothetical `policy_auto` runbook can self-approve, gated by a cooldown (falls back to approval if recently executed) and an incident-wide rate limit.
+- `sentinel.remediation.service` (`ActionService`): propose (idempotent by `sha256(incident|runbook|params)`; policy-decided initial status; rate-limited), approve/reject (role-gated, replay-protected — refuses if the runbook's sha256 changed since proposal), expiry (lazy on decide + a periodic worker sweep), full audit + timeline on every transition.
+- `sentinel.remediation.actuator_client`: `HttpActuatorClient` (classifies actuator responses into terminal `ActuatorError` vs retryable `ActuatorUnavailableError`) and `DryRunActuatorClient` (forces every call's `dry_run=true`, used when the global `SENTINEL_EXECUTION_MODE=dry_run`, the default).
+- `sentinel.remediation.execution` (`ExecutionService`): locks the action row, calls the actuator with bounded internal retries (transient only; terminal fails immediately, no retry), records every attempt, advances to `verifying` and enqueues the verify job on success.
+- `sentinel.remediation.verifier` (`VerificationService`): after `settle_s`, samples the runbook's checks every `interval_s` for up to `window_s`; succeeds on `consecutive` all-pass samples in a row, fails if the window runs out; a failed query or empty result **counts as a failed sample**, never as a pass.
+- Migration 0004: `action_requests`, `approvals`, `action_executions`, `verifications` (app role: UPDATE allowed only on `action_requests`; the rest are insert-only).
+- Investigations auto-propose their accepted actions (still gated by approval) — `InvestigationService(..., actions=...)`.
+- API: `POST/GET /incidents/{ref}/actions`, `GET /actions/{id}`, `POST /actions/{id}/approve|reject` (Approver role).
+- Compose: `sentinel-worker` joins the `app` network and gets the `actuator_token` secret to reach the actuator; `SENTINEL_EXECUTION_MODE` (`dry_run` default / `live`).
+
+## Phase 6 results (2026-10-09)
+- Lint and strict mypy clean (63 files); unit + policy **341 passed**; integration + API **90 passed** (431 total); bandit clean; pip-audit clean; promtool/amtool OK.
+- **Live exit criterion, in `SENTINEL_EXECUTION_MODE=live`, scenario B, fully real:** deploy 1.1.0 (PR-202) at 17:46:10 → INC-0011 reopened 17:47:48 → MOCK investigation **auto-proposed** `rollback-deployment` to 1.0.0 (`dry_run: false`) at 17:47:49 → approved via the API (Approver role) at 17:48:40 → executed for real against the actuator at 17:48:42 (`changed`) → **5 real Prometheus samples** (first one still showing a residual 9% error ratio from the in-flight restart, correctly not counted as a pass; 4 consecutive clean samples after) → **verified, incident resolved, `resolved_verified: true`** at 17:50:21. Audit chain: 114 events, `ok: true`.
+- **Two real bugs found only by running live** (the mocked integration tests, which answer canned values for any query text, could not have caught either):
+  - **NaN in JSON.** `histogram_quantile` over a sparse bucket returns `"NaN"`; Python's `json.dumps` serialises that non-standard token happily, but Postgres's strict JSON parser rejects it (`invalid input syntax for type json: Token "NaN" is invalid`), which failed evidence storage 3 times in a row before a lucky retry with denser data. Fixed by dropping non-finite points (`NaN`/`±Inf`) at Prometheus-response parse time in `evidence/clients.py`, with a regression test.
+  - **PromQL vector-matching.** `replicas_ready_ratio`'s query divided a recording rule's output (label set: `service` only) by `fleet_desired_replicas` (a raw scrape, still carrying `job`/`instance`). Without `on(service)`, Prometheus's default one-to-one match requires identical label sets and silently returns **no result at all** — every verification sample read "no data" and failed, even though the rollback itself had succeeded. The exact same class of bug had already been fixed in the `ShopApiReplicasUnavailable` alert rule back in Phase 2 (`on (service)`); I just hadn't carried that pattern into the new verifier query. Fixed, with a regression test and a confirmed live re-run.
+- Also found and fixed in review before any live run: a borrowed-time test fixture with `time.monotonic` frozen at a constant would have made the verification-failure test hang forever (the window deadline is never reached); replaced with a fake monotonic clock that advances in lockstep with the patched `asyncio.sleep`, so real runbook timings (settle_s/window_s/interval_s, up to minutes) are exercised in milliseconds without faking away the actual loop logic.
+- Orphaned a `postgres:18.6` testcontainers artifact from an earlier interrupted test run; confirmed it by its `org.testcontainers=true` label before removing it.
+- Scope note: Kubernetes actuator + dedicated kind cluster deferred (see Decisions) — the Docker actuator already satisfies the exit criterion end to end.
 
 ## What exists (Phase 5)
 - `runbooks/*.yaml` + `sentinel.remediation.runbooks`: schema-validated, sha256-hashed catalogue (rollback, restart, scale) with typed, bounded parameters and named verification checks (pulled forward from Phase 6).

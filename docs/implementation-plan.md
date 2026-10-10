@@ -30,12 +30,13 @@ Architecture, threat model, data flow, directory layout, API contracts, data mod
 - Verify that containers can reach host Ollama (`host.lima.internal:11434` under Colima) without rebinding Ollama off loopback.
 - **Tests:** mock provider golden tests for A/B/C, validator tests, prompt-injection tests, Ollama provider tests with recorded responses. An optional live test (`-m ollama`) runs only if Ollama is reachable, and its result is reported honestly.
 
-## Phase 6: Runbooks, approvals, execution, verification
-- Runbook YAML schema + loader + hashing; `restart-service`, `rollback-deployment`, `scale-service`.
-- Policy engine (approval rules, cooldown, rate limit, 4-eyes), approval binding, executor (idempotency, advisory lock, timeout, bounded retry), HTTP actuator client, dry-run actuator, optional K8s actuator (fake-client tests only unless you approve a dedicated kind cluster).
-- Verifier with K-consecutive-sample criteria; empty data counts as a fail.
-- **Tests:** full state-machine coverage, parameter-bound tests, replay/expiry/mismatch approvals, verification edge cases.
-- **Exit (full slice):** scenario B end to end in live mode: detect → evidence → mock diagnosis → approve → rollback → verified recovery.
+## Phase 6: Runbooks, approvals, execution, verification ✅ (2026-10-09)
+- Runbook YAML schema + loader + hashing; `restart-service`, `rollback-deployment`, `scale-service`. *(Built in Phase 5, since validating AI-recommended actions needed the catalogue early.)*
+- Policy engine (approval rules, cooldown, rate limit), approval binding (replay-protected on `runbook_sha256`), executor (idempotency, row-level lock in place of a separate advisory lock, per-call timeout via the HTTP client, bounded internal retry), HTTP actuator client, dry-run actuator wrapper.
+- Verifier with consecutive-sample criteria; a failed query or empty result counts as a fail.
+- **Tests:** full state-machine coverage, policy engine (unit), actuator-client error classification (unit), verifier check evaluation (unit); 13 integration tests on real Postgres covering the full lifecycle, retries, terminal failure, verification failure + fresh re-proposal, rejection, both expiry paths, replay-protection mismatch, rate limit, idempotency, and RBAC.
+- **Exit (full slice), live, real actuator, real Prometheus:** scenario B end to end in live mode — detect → evidence → mock diagnosis (auto-proposed) → approve (API, Approver role) → rollback (real actuator call) → **verified recovery (5 real Prometheus samples, incident resolved with `resolved_verified: true`)**. Full run and the two real bugs it surfaced are in `PROJECT_STATUS.md`.
+- **Not built:** a `4-eyes` (two-approver) policy rule, and the optional K8s actuator + dedicated `sentinel` kind cluster (decision 3, revisited — see "Open decisions" below and PROJECT_STATUS.md).
 
 ## Phase 7: Dashboard UI, reports, postmortems
 - Jinja2 + htmx UI: incident list/detail with the Observations vs. AI Hypotheses split, MOCK badge, telemetry deep links, approval page with param diff and DRY-RUN/LIVE banner, audit view.
@@ -62,10 +63,12 @@ Architecture, threat model, data flow, directory layout, API contracts, data mod
 
 1. **Package manager**: [install `uv` via Homebrew; fast and lock-file native] or plain pip + `pip-compile`-style hashed requirements.
 2. **Ollama model**: [use the installed `qwen2.5-coder:7b`] or pull a smaller or general-instruct model (a download, which needs your OK).
-3. **Kubernetes**: [implement the backend with fake-client tests only] or create a dedicated `sentinel` kind cluster for live K8s demos. The existing `ai-platform-engineer` cluster will not be touched either way.
+3. **Kubernetes**: you chose a dedicated `sentinel` kind cluster for live K8s demos, deferred to land alongside Phase 6. Phase 6 turned out substantial on its own (policy/approvals/execution/verification, with a fully-met live exit criterion on the Docker actuator alone), so the K8s actuator + cluster remain **not built** — a stretch addition on top of 6, not folded into it. The existing `ai-platform-engineer` cluster is never touched either way.
 4. **GitHub**: [local git only until Phase 8] then create a repo and push, only with your explicit approval.
 
 ## Changes during implementation
 - **Phase 5 pulled the runbook YAML format and loader forward from Phase 6.** Validating model-recommended actions needs the catalogue (IDs and typed parameter schemas). Policy, approvals, execution and verification remain in Phase 6.
 - **Phase 5 added focused evidence collection.** When a new kind of alert joins an incident, or an alert reopens one, evidence is anchored on that alert and the incident is re-investigated. This was found live (see PROJECT_STATUS.md).
 - **Decision 2 revisited (2026-10-09):** the original 7B model took 8–10 minutes per investigation and strained the 8 GB host. Pulled `qwen2.5-coder:3b` alongside it and made it the new default; same quality on a live re-run, ~40s instead of ~9 minutes. Both models remain installed; override with `SENTINEL_OLLAMA_MODEL`. See PROJECT_STATUS.md for the comparison.
+- **Phase 6: no "advisory lock" as such.** The plan named one explicitly; the action row is instead locked with `SELECT ... FOR UPDATE` for the `approved`→`executing` window, which gives the same single-writer guarantee using the idiom already established elsewhere in this codebase (`IncidentService.transition`), rather than introducing a second locking mechanism.
+- **Phase 6: two real bugs surfaced only by running live**, not by the (necessarily mocked) integration suite — a `NaN`-in-JSON evidence-storage failure, and a PromQL vector-match that silently returned no data for every verification sample. Both are detailed, with fixes and regression tests, in PROJECT_STATUS.md.

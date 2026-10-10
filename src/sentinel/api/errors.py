@@ -12,9 +12,17 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm.exc import StaleDataError
 from starlette.exceptions import HTTPException
 
+from sentinel.domain.actions import InvalidActionTransitionError
 from sentinel.domain.incidents import InvalidTransitionError
 from sentinel.incidents.service import IncidentNotFoundError
 from sentinel.observability.context import correlation_id_var
+from sentinel.remediation.runbooks import ParameterError
+from sentinel.remediation.service import (
+    ActionExpiredError,
+    ActionLimitExceededError,
+    ActionNotFoundError,
+    RunbookChangedError,
+)
 
 log = structlog.get_logger("sentinel.errors")
 _TITLES = {
@@ -69,6 +77,30 @@ def install(app: FastAPI) -> None:
     @app.exception_handler(StaleDataError)
     async def _stale(_: Request, exc: StaleDataError) -> JSONResponse:
         return problem(409, "incident was modified concurrently; retry")
+
+    @app.exception_handler(ActionNotFoundError)
+    async def _action_not_found(_: Request, exc: ActionNotFoundError) -> JSONResponse:
+        return problem(404, f"action request {exc} not found")
+
+    @app.exception_handler(InvalidActionTransitionError)
+    async def _action_transition(_: Request, exc: InvalidActionTransitionError) -> JSONResponse:
+        return problem(409, str(exc), current_status=exc.current.value)
+
+    @app.exception_handler(RunbookChangedError)
+    async def _runbook_changed(_: Request, exc: RunbookChangedError) -> JSONResponse:
+        return problem(409, str(exc))
+
+    @app.exception_handler(ActionExpiredError)
+    async def _action_expired(_: Request, exc: ActionExpiredError) -> JSONResponse:
+        return problem(409, str(exc))
+
+    @app.exception_handler(ActionLimitExceededError)
+    async def _action_limited(_: Request, exc: ActionLimitExceededError) -> JSONResponse:
+        return problem(429, str(exc))
+
+    @app.exception_handler(ParameterError)
+    async def _bad_parameters(_: Request, exc: ParameterError) -> JSONResponse:
+        return problem(422, str(exc))
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

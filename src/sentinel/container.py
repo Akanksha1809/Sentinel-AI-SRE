@@ -18,7 +18,9 @@ from sentinel.incidents.service import IncidentService
 from sentinel.jobs.queue import JobQueue
 from sentinel.observability.metrics import Metrics
 from sentinel.persistence.db import make_engine, make_sessionmaker, migration_head
+from sentinel.remediation.policy import PolicyEngine
 from sentinel.remediation.runbooks import RunbookCatalog
+from sentinel.remediation.service import ActionService
 
 
 @dataclass
@@ -33,6 +35,7 @@ class Container:
     deployments: DeploymentService
     jobs: JobQueue
     catalog: RunbookCatalog
+    actions: ActionService
     expected_migration: str | None = None
 
     @classmethod
@@ -43,22 +46,39 @@ class Container:
         engine = engine or make_engine(settings.database_url(), settings.db_pool_size)
         audit = AuditLog(clock)
         jobs = JobQueue(clock)
+        incidents = IncidentService(
+            clock,
+            audit,
+            settings.reopen_window,
+            jobs,
+            timedelta(seconds=settings.evidence_delay_s),
+        )
+        catalog = RunbookCatalog.load(settings.runbooks_dir)
+        policy = PolicyEngine(
+            max_per_incident=settings.action_max_per_incident, cooldown=settings.action_cooldown
+        )
+        metrics = Metrics()
         return cls(
             settings=settings,
             clock=clock,
             engine=engine,
             sessions=make_sessionmaker(engine),
-            metrics=Metrics(),
+            metrics=metrics,
             audit=audit,
-            incidents=IncidentService(
-                clock,
-                audit,
-                settings.reopen_window,
-                jobs,
-                timedelta(seconds=settings.evidence_delay_s),
-            ),
+            incidents=incidents,
             deployments=DeploymentService(clock, audit, settings.environment),
             jobs=jobs,
-            catalog=RunbookCatalog.load(settings.runbooks_dir),
+            catalog=catalog,
+            actions=ActionService(
+                clock,
+                audit,
+                incidents,
+                catalog,
+                jobs,
+                policy,
+                expiry=settings.action_expiry,
+                dry_run_default=settings.dry_run_default,
+                metrics=metrics,
+            ),
             expected_migration=migration_head(),
         )

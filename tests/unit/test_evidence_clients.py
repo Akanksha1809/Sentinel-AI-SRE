@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -38,7 +39,7 @@ async def test_query_range_parses_matrix_and_sends_params() -> None:
             json=matrix(
                 {
                     "metric": {"service": "shop-api"},
-                    "values": [[1.0, "0.1"], [16.0, "NaN"], [31.0, "0.2"]],
+                    "values": [[1.0, "0.1"], [16.0, "0.15"], [31.0, "0.2"]],
                 }
             ),
         )
@@ -49,6 +50,38 @@ async def test_query_range_parses_matrix_and_sends_params() -> None:
     params = route.calls.last.request.url.params
     assert params["query"] == "up"
     assert params["step"] == "15s"
+
+
+@respx.mock
+async def test_non_finite_points_are_dropped_not_kept() -> None:
+    """Regression: Prometheus emits "NaN"/"+Inf"/"-Inf" for samples with no real data
+    (e.g. histogram_quantile over an empty bucket). Postgres's JSON parser rejects
+    those tokens outright (unlike Python's), so a kept NaN used to crash evidence
+    storage with `invalid input syntax for type json: Token "NaN" is invalid`
+    (found live running Phase 6). They must be dropped at parse time, not kept."""
+    respx.get(f"{PROM}/api/v1/query_range").mock(
+        return_value=httpx.Response(
+            200,
+            json=matrix(
+                {
+                    "metric": {"service": "shop-api"},
+                    "values": [
+                        [1.0, "0.1"],
+                        [16.0, "NaN"],
+                        [24.0, "+Inf"],
+                        [28.0, "-Inf"],
+                        [31.0, "0.2"],
+                    ],
+                }
+            ),
+        )
+    )
+    [s] = await PrometheusClient(PROM).query_range("up", START, END, 15)
+    assert [p.ts for p in s.points] == [1.0, 31.0]
+    assert [p.value for p in s.points] == [0.1, 0.2]
+    # Every surviving value must actually be JSON-serialisable the strict way Postgres
+    # requires (Python's json module, unlike Postgres, would happily emit NaN/Infinity).
+    json.dumps([p.value for p in s.points], allow_nan=False)
 
 
 @respx.mock

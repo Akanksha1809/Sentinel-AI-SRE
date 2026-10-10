@@ -2,9 +2,12 @@
 
 All tables use `uuid` PKs (UUIDv7, so they sort by time) and `timestamptz` in UTC. JSONB columns are validated by Pydantic before write. Alembic owns all DDL (`src/sentinel/migrations`).
 
-> **Implemented in migration 0001 (Phase 3):** `incidents`, `alerts`, `incident_events`, `deployments`, `principals`, `jobs`, `audit_events`. Migration 0002 (Phase 4) adds `evidence_collections` and `evidence_items`; 0003 (Phase 5) adds `investigations` and `hypotheses`. The remaining tables arrive with their phases ( runbooks/actions/approvals/executions/verifications: 6, postmortems: 7).
+> **Implemented in migration 0001 (Phase 3):** `incidents`, `alerts`, `incident_events`, `deployments`, `principals`, `jobs`, `audit_events`. Migration 0002 (Phase 4) adds `evidence_collections` and `evidence_items`; 0003 (Phase 5) adds `investigations` and `hypotheses`; 0004 (Phase 6) adds `action_requests`, `approvals`, `action_executions`, `verifications`. The remaining table arrives with Phase 7 (postmortems).
 >
-> **Deviation from the Phase 1 design:** there is no `services` table. Incidents and deployments carry `service` + `environment` as validated text, and grouping uses `dedupe_key = environment/service`. A table would add a join with no current consumer; it can be introduced when per-service metadata (owners, SLO targets) is needed.
+> **Deviations from the Phase 1 design:**
+> - No `services` table. Incidents and deployments carry `service` + `environment` as validated text, and grouping uses `dedupe_key = environment/service`. A table would add a join with no current consumer; it can be introduced when per-service metadata (owners, SLO targets) is needed.
+> - No `runbook_versions` table. Runbooks are version-controlled YAML files (`runbooks/*.yaml`), not database rows; each `action_requests` row instead carries `runbook_id`, `runbook_version` and `runbook_sha256` directly, captured at proposal time. This is what approval replay-checks against (see Phase 6 architecture notes) — a database table would just be a cache of the filesystem with nothing else reading it.
+> - `action_requests.source` is `ai_recommendation` or `human` — who *proposed* it. A `policy_auto` *runbook* can self-approve (recorded as actor `policy:auto` on the approval and the timeline), but that is an approval outcome, not a third source value.
 
 ```mermaid
 erDiagram
@@ -14,7 +17,7 @@ erDiagram
     incidents ||--o{ investigations : analysed_by
     investigations ||--o{ hypotheses : proposes
     incidents ||--o{ action_requests : remediated_by
-    runbook_versions ||--o{ action_requests : instantiates
+    investigations ||--o{ action_requests : recommends
     action_requests ||--o{ approvals : authorised_by
     action_requests ||--o{ action_executions : attempts
     action_requests ||--o{ verifications : verified_by
@@ -34,11 +37,10 @@ erDiagram
 | `evidence_items` | `id, collection_id, incident_id, position, ref (unique per collection, e.g. metric.error_ratio), kind (metric/log/change/derived/gap), source, title, summary, query, data jsonb, flags text[]` | **Observations, derived signals and data gaps only, never AI output.** `flags`: `primary`, `no_data`, `redacted`, `truncated`, `possible_prompt_injection`. App role: INSERT/SELECT only (immutable) |
 | `investigations` | `id, incident_id, collection_id, status (running/succeeded/failed), provider, model, is_mock, prompt_version, input_hash, requested_by, started_at, finished_at, latency_ms, error, report jsonb, validation jsonb` | Recorded *before* the provider call. `validation` holds accepted/rejected actions and dropped citations. App role: no DELETE |
 | `hypotheses` | `id, investigation_id, rank (0 = suspected root cause), statement, confidence (CHECK 0..1), cited_evidence text[], why_less_likely, uncited, generated (CHECK true)` | **AI-generated**, insert-only for the app role |
-| `runbook_versions` | `id, runbook_id, version, content_sha256, definition jsonb, loaded_at` | Unique `(runbook_id, version)` |
-| `action_requests` | `id, incident_id, runbook_version_id, action_type, parameters jsonb, params_sha256, idempotency_key unique, status, source (ai_recommendation/human/policy), requested_by, dry_run bool, created_at, expires_at` | State machine below |
-| `approvals` | `id, action_request_id, principal_id, decision (approved/rejected), reason, params_sha256, runbook_sha256, decided_at` | Binds to the exact parameters and runbook content |
-| `action_executions` | `id, action_request_id, attempt, started_at, finished_at, outcome, actuator_response jsonb, error` | One row per bounded retry |
-| `verifications` | `id, action_request_id, criteria jsonb, samples jsonb, passed bool, started_at, finished_at` | Measured values are stored |
+| `action_requests` | `id, incident_id, investigation_id, runbook_id, runbook_version, runbook_sha256, action_type, parameters jsonb, params_sha256, idempotency_key, status, source (ai_recommendation/human), rationale, cited_evidence text[], requested_by, dry_run bool, created_at, updated_at, expires_at` | Partial unique index on `idempotency_key WHERE status IN (active set)`, so a terminal request never blocks a fresh identical one. App role: UPDATE allowed (status transitions) |
+| `approvals` | `id, action_request_id, principal, decision (approved/rejected), reason, params_sha256, runbook_sha256, decided_at` | Binds to the exact parameters and runbook content at proposal time; re-checked against the *current* catalogue at approval time (replay protection). Insert-only |
+| `action_executions` | `id, action_request_id, attempt, started_at, finished_at, outcome (changed/noop/error), actuator_response jsonb, error` | One row per bounded internal retry (transient failures only). Insert-only |
+| `verifications` | `id, action_request_id, criteria jsonb, samples jsonb, passed bool, started_at, finished_at` | `samples` is a JSON array, one entry per sampling tick, each with every check's observed value and pass/fail. Measured values only — never a status report without them. Insert-only |
 | `postmortems` | `id, incident_id, status (draft/final), markdown, generated_sections jsonb, authored_by, updated_at` | AI-drafted sections are flagged |
 | `principals` | `id, name, role, token_sha256, active, created_at` | Bootstrap admin from secret |
 | `jobs` | `id, kind, payload jsonb, status, dedupe_key, attempts, max_attempts, run_after, locked_by, locked_at, last_error, created_at, finished_at` | Queue via `SKIP LOCKED`. Partial unique `dedupe_key` while pending/running |
@@ -49,11 +51,11 @@ erDiagram
 **Incident**: `open → acknowledged → investigating → remediating → verifying → resolved → closed`.
 Also allowed: `any open state → resolved` (manual resolve requires a reason and is audited); `verifying → remediating` (verification failed); `resolved → open` (re-fire within the reopen window, default 10 min).
 
-**ActionRequest**: `proposed → pending_approval → approved → executing → verifying → succeeded`.
-Terminal states: `rejected`, `expired`, `failed`, `verification_failed`, `cancelled`, `superseded`. A policy auto-approve transition `proposed → approved` is recorded as `actor=policy:<rule>`.
+**ActionRequest** (`src/sentinel/domain/actions.py`): `proposed → pending_approval → approved → executing → verifying → succeeded`.
+Terminal states: `rejected`, `expired`, `failed`, `verification_failed`, `cancelled`. `verification_failed` has **no** outgoing transition — a failed verification never auto-retries the same request; a fresh proposal (same idempotency rule) is required. A policy auto-approve transition is recorded as `actor=policy:auto` on the approval row and the timeline event, exactly like a human approval otherwise.
 
 ## Roles (DB)
 
 - `sentinel_migrator`: owns the schema (DDL), used only by `alembic upgrade`.
-- `sentinel_app`: DML on all tables except `audit_events` (INSERT/SELECT only); SELECT on `alembic_version` (readiness). No DDL. Verified by `tests/integration/test_database.py`.
+- `sentinel_app`: DML on all tables except `audit_events`, `approvals`, `action_executions`, `verifications`, `evidence_collections`, `evidence_items`, `hypotheses` (INSERT/SELECT only on those — they are each either append-only or immutable once written); `action_requests` additionally gets UPDATE (status transitions); SELECT on `alembic_version` (readiness). No DDL. Verified by `tests/integration/test_database.py`.
 - Both roles are created by `sentinel db init` (the `sentinel-migrate` one-shot service), the only place the superuser password is used.

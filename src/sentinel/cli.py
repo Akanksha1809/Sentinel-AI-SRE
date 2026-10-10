@@ -60,6 +60,15 @@ def _cmd_worker(_: argparse.Namespace) -> int:
     from sentinel.investigation.service import InvestigationService
     from sentinel.jobs.worker import Worker
     from sentinel.observability.logging import configure_logging
+    from sentinel.remediation.actuator_client import (
+        ActuatorClient,
+        DryRunActuatorClient,
+        HttpActuatorClient,
+    )
+    from sentinel.remediation.execution import JOB_KIND as EXECUTE_JOB
+    from sentinel.remediation.execution import ExecutionService
+    from sentinel.remediation.verifier import JOB_KIND as VERIFY_JOB
+    from sentinel.remediation.verifier import VerificationService
 
     settings = load_settings()
     configure_logging(settings.log_level, "sentinel-worker")
@@ -100,11 +109,43 @@ def _cmd_worker(_: argparse.Namespace) -> int:
             providers,
             container.metrics,
             timeout_s=settings.investigation_timeout_s,
+            actions=container.actions,
+        )
+
+        token = settings.actuator_token.get_secret_value() if settings.actuator_token else ""
+        actuator: ActuatorClient = HttpActuatorClient(
+            settings.actuator_base_url, token, timeout_s=settings.actuator_timeout_s
+        )
+        if settings.execution_mode == "dry_run":
+            actuator = DryRunActuatorClient(actuator)
+        execution = ExecutionService(
+            container.sessions,
+            container.clock,
+            container.incidents,
+            container.audit,
+            actuator,
+            container.jobs,
+            max_attempts=settings.action_execute_max_attempts,
+            metrics=container.metrics,
+        )
+        verification = VerificationService(
+            container.sessions,
+            container.clock,
+            container.incidents,
+            container.catalog,
+            container.audit,
+            prometheus,
+            app_metrics=container.metrics,
         )
         worker = Worker(
             container.sessions,
             container.jobs,
-            {JOB_KIND: evidence.handle_job, INVESTIGATION_JOB: investigations.handle_job},
+            {
+                JOB_KIND: evidence.handle_job,
+                INVESTIGATION_JOB: investigations.handle_job,
+                EXECUTE_JOB: execution.handle_job,
+                VERIFY_JOB: verification.handle_job,
+            },
             job_timeout_s=settings.investigation_timeout_s + 60,
         )
         log.info(
@@ -112,6 +153,11 @@ def _cmd_worker(_: argparse.Namespace) -> int:
             providers=sorted(providers),
             default=settings.investigation_provider,
             auto=settings.auto_investigate,
+        )
+        log.info(
+            "remediation ready",
+            execution_mode=settings.execution_mode,
+            actuator_token_configured=settings.actuator_token is not None,
         )
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
@@ -130,13 +176,28 @@ def _cmd_worker(_: argparse.Namespace) -> int:
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), 15)
 
+        async def sweep_expired_actions() -> None:
+            while not stop.is_set():
+                try:
+                    async with container.sessions.begin() as session:
+                        expired = await container.actions.expire_stale(session)
+                    if expired:
+                        log.info("expired stale action requests", count=expired)
+                except Exception:
+                    log.warning("action expiry sweep failed", exc_info=True)
+                with contextlib.suppress(TimeoutError):
+                    await asyncio.wait_for(stop.wait(), settings.action_sweep_interval_s)
+
         try:
-            await asyncio.gather(worker.run_forever(stop), refresh_gauges())
+            await asyncio.gather(
+                worker.run_forever(stop), refresh_gauges(), sweep_expired_actions()
+            )
         finally:
             await prometheus.aclose()
             await loki.aclose()
             if ollama is not None:
                 await ollama.aclose()
+            await actuator.aclose()
             await container.engine.dispose()
             log.info("worker stopped")
 

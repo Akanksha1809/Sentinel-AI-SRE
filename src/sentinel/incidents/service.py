@@ -25,7 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from sentinel.audit import AuditLog
 from sentinel.domain.enums import AlertStatus, EventKind, IncidentStatus, Severity
-from sentinel.domain.incidents import ACTIVE, check_transition
+from sentinel.domain.incidents import ACTIVE, InvalidTransitionError, check_transition
 from sentinel.ids import Clock
 from sentinel.ingestion.alertmanager import NormalizedAlert
 from sentinel.jobs.queue import JobQueue
@@ -440,6 +440,27 @@ class IncidentService:
         )
         await session.flush()
         return incident
+
+    async def try_transition(
+        self,
+        session: AsyncSession,
+        incident_id: uuid.UUID,
+        target: IncidentStatus,
+        actor: str,
+        *,
+        reason: str | None = None,
+        verified: bool = False,
+    ) -> Incident | None:
+        """Best-effort version of `transition`: used by remediation, where the action's
+        own status is authoritative and the incident's status is just kept in step when
+        that happens to be a valid move (e.g. it may already be past this point, or a
+        human may have moved it elsewhere in the meantime)."""
+        try:
+            return await self.transition(
+                session, incident_id, target, actor, reason=reason, verified=verified
+            )
+        except InvalidTransitionError:
+            return None
 
     async def acknowledge(
         self, session: AsyncSession, incident_id: uuid.UUID, actor: str, note: str | None = None
