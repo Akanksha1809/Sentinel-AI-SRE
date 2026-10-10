@@ -24,7 +24,10 @@ services:
   socket-proxy-rw:
     <<: *hardening
     image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
-    user: "65534:991"  # nobody + the VM's docker socket group (see docs/troubleshooting.md)
+    # nobody + the host's docker.sock group. Defaults to 991 (this project's Colima
+    # VM); override with DOCKER_SOCK_GID=$(stat -c %g /var/run/docker.sock) on any
+    # other host/CI runner, where that group ID will differ (see docs/troubleshooting.md).
+    user: "65534:${DOCKER_SOCK_GID:-991}"
     read_only: true
     mem_limit: 32m
     command:
@@ -53,7 +56,7 @@ services:
   socket-proxy-ro:
     <<: *hardening
     image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
-    user: "65534:991"
+    user: "65534:${DOCKER_SOCK_GID:-991}"
     read_only: true
     mem_limit: 32m
     command:

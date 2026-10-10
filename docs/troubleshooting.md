@@ -7,12 +7,21 @@ On Homebrew/Colima installs, Compose is often only the standalone binary. The Ma
 uses `docker-compose` (override with `make COMPOSE="docker compose -f deploy/compose/docker-compose.yml" ...`).
 
 ## Socket proxies are unhealthy / `permission denied` on `/var/run/docker.sock`
-The proxies run as `65534:991`, where `991` is the Docker socket's group **inside the
-Colima VM**. If your VM uses a different group ID, find it and update `user:` for
-both `socket-proxy-*` services in `deploy/compose/docker-compose.yml`:
+The proxies run as `65534:${DOCKER_SOCK_GID:-991}` — `991` is `/var/run/docker.sock`'s
+group **inside this project's own Colima VM**, which is almost certainly not the group
+ID on your host. Set `DOCKER_SOCK_GID` before `up`:
 ```bash
-docker run --rm -v /var/run/docker.sock:/s:ro --entrypoint sh prom/prometheus:v3.13.4 -c 'stat -c %g /s'
+export DOCKER_SOCK_GID=$(stat -c %g /var/run/docker.sock)   # Linux/Colima
+# macOS without Colima's stat: docker run --rm -v /var/run/docker.sock:/s:ro --entrypoint sh \
+#   prom/prometheus:v3.13.4 -c 'stat -c %g /s'
+make up
 ```
+This is exactly what caught `sentinel-socket-proxy-ro-1 is unhealthy` the first time
+the e2e CI job actually ran the full stack on a GitHub-hosted runner (Phase 8) — no
+earlier CI job had ever run `docker compose up`, only `build`, so this had never been
+exercised outside this project's own Colima VM. The `e2e` job in `.github/workflows/ci.yml`
+resolves and exports `DOCKER_SOCK_GID` automatically; do the same for any other CI
+runner or a teammate's non-Colima Docker setup.
 
 ## Loki has no logs; Alloy logs `error while computing network labels: ... Forbidden`
 Alloy's Docker discovery also calls `GET /networks`. That path must be in

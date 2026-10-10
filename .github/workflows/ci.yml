@@ -95,6 +95,12 @@ jobs:
         # has a build stanza first (same as the `images` job / `make images`), then
         # `up` without --build so it uses what's already tagged locally.
         run: docker compose -f deploy/compose/docker-compose.yml --profile images build
+      - name: Resolve the docker.sock group for this runner
+        # The socket proxies run as a fixed non-root group that must match
+        # /var/run/docker.sock's actual group on this host - the Compose default
+        # (991) is this project's own Colima VM, not GitHub's runner. Exported for
+        # every later docker compose step in this job (up, logs, down).
+        run: echo "DOCKER_SOCK_GID=$(stat -c %g /var/run/docker.sock)" >> "$GITHUB_ENV"
       - name: Start the stack in live execution mode
         run: SENTINEL_EXECUTION_MODE=live docker compose -f deploy/compose/docker-compose.yml up -d
       - name: Wait for readiness
