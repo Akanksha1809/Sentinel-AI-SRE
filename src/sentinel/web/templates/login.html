@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}Log in · Sentinel{% endblock %}
+{% block content %}
+<div class="login-wrap card">
+  <h2>Sentinel</h2>
+  <p class="muted">Paste your API token to start a session.</p>
+  {% if error %}<div class="flash error">{{ error }}</div>{% endif %}
+  <form method="post" action="/login">
+    <input type="hidden" name="next" value="{{ next_path }}">
+    <label for="token">API token</label>
+    <input type="password" id="token" name="token" autocomplete="current-password" required
+           maxlength="200">
+    <p style="margin-top:1rem"><button type="submit" class="primary">Log in</button></p>
+  </form>
+</div>
+{% endblock %}

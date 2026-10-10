@@ -4,17 +4,21 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 import structlog
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
 
 from sentinel import __version__
 from sentinel.api import errors
-from sentinel.api.routes import actions, admin, incidents, investigations, webhooks
+from sentinel.api.routes import actions, admin, incidents, investigations, postmortems, webhooks
 from sentinel.container import Container
 from sentinel.domain.enums import Role
 from sentinel.observability.middleware import ObservabilityMiddleware
 from sentinel.security import BOOTSTRAP_ADMIN, upsert_principal
+from sentinel.web import routes as web_routes
+from sentinel.web.csp import SecurityHeadersMiddleware
 
 log = structlog.get_logger("sentinel.api")
 
@@ -64,6 +68,7 @@ def create_app(container: Container, *, run_bootstrap: bool = True) -> FastAPI:
     container.metrics.build.labels(__version__).set(1)
     errors.install(app)
     app.add_middleware(ObservabilityMiddleware, metrics=container.metrics)
+    app.add_middleware(SecurityHeadersMiddleware)
     for router in (
         admin.health,
         webhooks.router,
@@ -72,6 +77,13 @@ def create_app(container: Container, *, run_bootstrap: bool = True) -> FastAPI:
         admin.audit,
         investigations.router,
         actions.router,
+        postmortems.router,
+        web_routes.router,
     ):
         app.include_router(router)
+    app.mount(
+        "/static",
+        StaticFiles(directory=str(Path(__file__).parent / "web" / "static")),
+        name="static",
+    )
     return app

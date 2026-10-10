@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Action {{ action.runbook_id }} · Sentinel{% endblock %}
+{% block content %}
+<h1>{{ action.runbook_id }}</h1>
+<p>
+  <span class="badge {{ action.status }}">{{ action.status }}</span>
+  <span class="badge {{ 'warning' if not action.dry_run else 'ok' }}">
+    {{ "LIVE" if not action.dry_run else "DRY-RUN" }}
+  </span>
+  for incident <a href="/incidents/{{ action.incident_id }}">{{ action.incident_id }}</a>
+</p>
+
+<div class="card">
+  <h2>Proposed parameters</h2>
+  <dl class="kv">
+    {% for k, v in action.parameters.items() %}
+    <dt>{{ k }}</dt><dd>{{ v }}</dd>
+    {% endfor %}
+  </dl>
+  <h3>Runbook content check</h3>
+  {% if catalog_sha256 is none %}
+  <p class="diff-mismatch">This runbook no longer exists in the catalogue.</p>
+  {% elif catalog_sha256 == action.runbook_sha256 %}
+  <p class="diff-match">Bound runbook content matches the current catalogue (sha256 {{ action.runbook_sha256[:12] }}…).</p>
+  {% else %}
+  <p class="diff-mismatch">
+    The runbook changed since this was proposed — approval will be refused.<br>
+    Bound: <code>{{ action.runbook_sha256[:16] }}…</code> · Current: <code>{{ catalog_sha256[:16] }}…</code>
+  </p>
+  {% endif %}
+  <h3>Rationale</h3>
+  <p>{{ action.rationale or "—" }}</p>
+  {% if action.cited_evidence %}
+  <h3>Cited evidence</h3>
+  <p>{% for ref in action.cited_evidence %}<code>{{ ref }}</code> {% endfor %}</p>
+  {% endif %}
+</div>
+
+{% if action.status == "pending_approval" and identity.role.satisfies(Role.APPROVER) %}
+<div class="card">
+  <h2>Decision</h2>
+  <form method="post" action="/actions/{{ action.id }}/approve">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="areason">Reason (optional)</label>
+    <input type="text" id="areason" name="reason" maxlength="2000">
+    <p><button type="submit" class="primary">Approve</button></p>
+  </form>
+  <form method="post" action="/actions/{{ action.id }}/reject">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="rreason">Reason (required)</label>
+    <input type="text" id="rreason" name="reason" minlength="3" maxlength="2000" required>
+    <p><button type="submit" class="danger">Reject</button></p>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>History</h2>
+  <h3>Approvals</h3>
+  {% for ap in action.approvals %}
+  <p>{{ ap.decided_at.strftime("%Y-%m-%d %H:%M:%S") }} — <strong>{{ ap.decision }}</strong> by {{ ap.principal }}{% if ap.reason %}: {{ ap.reason }}{% endif %}</p>
+  {% else %}<p class="muted">None yet.</p>{% endfor %}
+  <h3>Executions</h3>
+  {% for ex in action.executions %}
+  <p>attempt {{ ex.attempt }} — <strong>{{ ex.outcome }}</strong>{% if ex.error %}: {{ ex.error }}{% endif %}</p>
+  {% else %}<p class="muted">None yet.</p>{% endfor %}
+  <h3>Verifications</h3>
+  {% for v in action.verifications %}
+  <p>{{ "passed" if v.passed else ("failed" if v.passed is not none else "running") }} ({{ v.samples|length }} sample(s))</p>
+  {% else %}<p class="muted">None yet.</p>{% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Incidents · Sentinel{% endblock %}
+{% block content %}
+<h1>Incidents</h1>
+{% if incidents %}
+<table>
+  <thead>
+    <tr><th>ID</th><th>Title</th><th>Service</th><th>Severity</th><th>Status</th><th>Opened</th></tr>
+  </thead>
+  <tbody>
+    {% for i in incidents %}
+    <tr>
+      <td><a href="/incidents/{{ i.short_id }}">{{ i.short_id }}</a></td>
+      <td>{{ i.title }}</td>
+      <td>{{ i.service }}</td>
+      <td><span class="badge {{ i.severity }}">{{ i.severity }}</span></td>
+      <td><span class="badge {{ i.status }}">{{ i.status }}</span></td>
+      <td>{{ i.opened_at.strftime("%Y-%m-%d %H:%M") }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p class="muted">No incidents yet.</p>
+{% endif %}
+{% endblock %}

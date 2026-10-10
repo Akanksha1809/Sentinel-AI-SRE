@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}Audit · Sentinel{% endblock %}
+{% block content %}
+<h1>Audit log</h1>
+<table>
+  <thead><tr><th>Seq</th><th>At</th><th>Actor</th><th>Action</th><th>Subject</th><th>Hash</th></tr></thead>
+  <tbody>
+    {% for e in events %}
+    <tr>
+      <td>{{ e.seq }}</td>
+      <td>{{ e.at.strftime("%Y-%m-%d %H:%M:%S") }}</td>
+      <td>{{ e.actor }}</td>
+      <td>{{ e.action }}</td>
+      <td>{{ e.subject_type }}:{{ e.subject_id }}</td>
+      <td><code>{{ e.hash[:12] }}…</code></td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

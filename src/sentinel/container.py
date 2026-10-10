@@ -21,6 +21,7 @@ from sentinel.persistence.db import make_engine, make_sessionmaker, migration_he
 from sentinel.remediation.policy import PolicyEngine
 from sentinel.remediation.runbooks import RunbookCatalog
 from sentinel.remediation.service import ActionService
+from sentinel.reports.service import PostmortemService
 
 
 @dataclass
@@ -36,6 +37,7 @@ class Container:
     jobs: JobQueue
     catalog: RunbookCatalog
     actions: ActionService
+    postmortems: PostmortemService
     expected_migration: str | None = None
 
     @classmethod
@@ -80,5 +82,6 @@ class Container:
                 dry_run_default=settings.dry_run_default,
                 metrics=metrics,
             ),
+            postmortems=PostmortemService(clock, audit, incidents),
             expected_migration=migration_head(),
         )

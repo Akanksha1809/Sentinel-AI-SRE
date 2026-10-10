@@ -1,8 +1,7 @@
 # Sentinel — Architecture
 
-> Status: Phases 1–6 implemented (target system, monitoring, ingestion/incidents, evidence,
-> investigation, remediation). The dashboard UI and postmortems (Phase 7) are still design;
-> see `PROJECT_STATUS.md`.
+> Status: Phases 1–7 implemented (target system, monitoring, ingestion/incidents, evidence,
+> investigation, remediation, dashboard UI + postmortems). See `PROJECT_STATUS.md`.
 
 Sentinel is an AI-assisted SRE incident response platform. It detects incidents
 from real alert signals, collects evidence from metrics, logs and change history,
@@ -27,7 +26,7 @@ Decisions below are based on what is actually installed, not assumed.
 | Existing containers | `ai-platform-engineer-jenkins` (~0.8 GB) and a kind node (~3.2 GB) already running | ~4 GB of the VM is already used by another project. Sentinel must not touch them; README will recommend pausing them during demos |
 | Kubernetes | `kubectl`, `kind`, `minikube`, `helm` installed; context `kind-ai-platform-engineer` (another project's cluster) | K8s backend is **optional**; it will never target the current context by default; it uses its own namespace or its own kind cluster |
 | **Ollama** | **v0.32.0**, app at `/Applications/Ollama.app`, CLI symlink `/usr/local/bin/ollama` → `/Applications/Ollama.app/Contents/Resources/ollama`. Models in `~/.ollama/models` (4.4 GB): **`qwen2.5-coder:7b`** (4.68 GB Q4). Server **not running** at check time (`localhost:11434` refused) | Ollama runs **natively on the host** (Metal GPU), not in Compose. Sentinel reaches it via Colima's host alias. Mock provider is the default |
-| Node.js | Not installed | UI is server-rendered (Jinja2 + vendored htmx). No JS build chain |
+| Node.js | Not installed | UI is server-rendered Jinja2, plain HTML forms — no client-side JS at all (Phase 7 deviation from the original "vendored htmx" sketch; see `docs/threat-model.md` T14), so there was never a build chain to need |
 | psql | Not installed | Use `docker-compose exec postgres psql` for debugging |
 | GitHub CLI | Installed, authenticated | CI can be pushed later, **only with your approval** |
 
@@ -204,7 +203,7 @@ sequenceDiagram
 | D4 | Policy engine, approval, and idempotency keys on every action. **Dry-run is the default execution mode** | Safe by default. Live mode is an explicit opt-in (`SENTINEL_EXECUTION_MODE=live`) | — |
 | D5 | Recovery = **all** verification criteria pass for K consecutive samples over a window, using measured values that are stored | Recovery is never reported without signals | Trusting the action's return code, or alert-resolved alone |
 | D6 | Audit log is append-only: a DB trigger blocks UPDATE/DELETE, and a SHA-256 hash chain gives tamper evidence, checked by `GET /api/v1/audit/verify` | Tamper evidence within the scope of a demo | External WORM storage (noted as a prod extension) |
-| D7 | Server-rendered UI (Jinja2 + vendored htmx, strict CSP) | No Node toolchain on host; small attack surface; autoescape against log-content XSS | React SPA |
+| D7 | Server-rendered UI (Jinja2, strict CSP `script-src 'none'` — plain HTML forms, no htmx/JS at all) | No Node toolchain on host; smallest possible attack surface; autoescape against log-content XSS; CSRF via a hidden form field needs no JS to set a header | React SPA; htmx (would need a vendored third-party JS file this environment had no way to fetch/verify) |
 | D8 | Postgres job queue (`SKIP LOCKED`) instead of Celery/Redis | One fewer service under an 8 GB budget; transactional enqueue | Celery + Redis |
 | D9 | Ollama on the host, not in Compose; the **mock provider is the default** | Metal acceleration; a 4.7 GB model inside the Colima VM would starve the stack; offline demos and CI need no LLM | Ollama container |
 | D10 | Demo timing is compressed (5 s scrape, alert `for:` 30–60 s, 2 min verification window), set via config | A full scenario finishes in about 5 minutes and stays deterministic | Production-like 5 m windows |
@@ -267,14 +266,15 @@ Sentinel-AI-SRE/
 │   ├── remediation/               # runbooks.py (schema+loader), policy.py, approvals.py,
 │   │                              # executor.py, verifier.py, actuators/{base,http,k8s,dryrun}.py
 │   ├── audit/                     # hash-chained writer, verifier
-│   ├── reports/                   # summaries, postmortem (Markdown) + templates
+│   ├── reports/                   # markdown.py (pure), service.py (postmortem generate/edit/finalize)
 │   ├── jobs/                      # Postgres queue, handlers
 │   ├── persistence/               # engine/session, ORM models, repositories
-│   ├── security/                  # tokens, RBAC, CSRF, secret loading
+│   ├── security/                  # Bearer tokens, RBAC (JSON API auth)
 │   ├── observability/             # structlog JSON, correlation-id middleware, metrics
 │   ├── api/                       # routers: health, webhooks, incidents, actions, runbooks,
-│   │                              # deployments, reports, audit; deps.py
-│   └── web/                       # templates/, static/ (vendored htmx, CSS)
+│   │                              # deployments, postmortems, audit; deps.py, errors.py
+│   └── web/                       # session.py (UI cookie auth + CSRF), csp.py, routes.py,
+│                                  # templates/, static/ (CSS only, no JS)
 ├── migrations/                    # alembic
 ├── runbooks/                      # restart-service.yaml, rollback-deployment.yaml, scale-service.yaml
 ├── services/

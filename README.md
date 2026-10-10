@@ -2,7 +2,7 @@
 
 Sentinel detects production-like incidents and correlates metrics and logs with recent changes. It investigates likely root causes with an LLM that is grounded in evidence and has **no tools**, proposes remediation only from an allowlisted runbook catalogue, executes approved actions through a least-privilege actuator, and verifies recovery against measured health signals.
 
-> **Status: Phase 6 of 8 complete.** Alerts become audited incidents; a worker gathers evidence, investigates, and *recommends* an allowlisted runbook. An approver signs off, the actuator executes it, and recovery is only reported after real Prometheus checks pass for several samples in a row. Dashboard UI and postmortems start in Phase 7. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **Status: Phase 7 of 8 complete.** Alerts become audited incidents; a worker gathers evidence, investigates, and *recommends* an allowlisted runbook. An approver signs off, the actuator executes it, and recovery is only reported after real Prometheus checks pass for several samples in a row. A server-rendered dashboard (session-cookie auth, no client-side JS) covers incident triage, approvals, and a postmortem generator built from stored facts, never a new AI call. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## What runs today
 | Component | Role |
@@ -12,7 +12,7 @@ Sentinel detects production-like incidents and correlates metrics and logs with 
 | **docker-guard** | Docker API admission controller: blocks privileged/mounted/escalated containers and changes to anything Sentinel doesn't manage |
 | **Prometheus / Alertmanager** | SLIs, SLO burn-rate alerts, saturation and crash-loop alerts |
 | **Loki / Alloy / Grafana** | Centralised logs (labelled by version and config revision) and a provisioned service dashboard |
-| **Sentinel API** | Alertmanager webhook ingestion, incident lifecycle, deployment history, RBAC, hash-chained audit log, action propose/approve/reject (http://127.0.0.1:8080/api/docs) |
+| **Sentinel API** | Alertmanager webhook ingestion, incident lifecycle, deployment history, RBAC, hash-chained audit log, action propose/approve/reject, postmortem generate/edit/finalize, and a server-rendered web UI (http://127.0.0.1:8080/, JSON API docs at /api/docs) |
 | **Sentinel worker** | Evidence collection, investigations (MOCK by default or a local Ollama model), and remediation: executes approved actions against the actuator and verifies recovery against measured Prometheus signals before resolving the incident |
 
 ## Quick start (macOS/Linux, Docker + uv)

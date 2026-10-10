@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Runbooks · Sentinel{% endblock %}
+{% block content %}
+<h1>Runbook catalogue</h1>
+{% for r in runbooks %}
+<div class="card">
+  <h2>{{ r.id }} <span class="muted">v{{ r.version }}</span></h2>
+  <p>{{ r.title }}</p>
+  <p class="muted">{{ r.description }}</p>
+  <dl class="kv">
+    <dt>Action</dt><dd>{{ r.action }}</dd>
+    <dt>Disruptive</dt><dd>{{ r.disruptive }}</dd>
+    <dt>Approval</dt><dd>{{ r.approval }}</dd>
+    <dt>sha256</dt><dd>{{ r.sha256[:16] }}…</dd>
+  </dl>
+  <h3>Parameters</h3>
+  <table>
+    <thead><tr><th>Name</th><th>Type</th><th>Required</th></tr></thead>
+    <tbody>
+      {% for name, spec in r.parameters.items() %}
+      <tr><td>{{ name }}</td><td>{{ spec.type }}</td><td>{{ spec.required }}</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+{% endblock %}

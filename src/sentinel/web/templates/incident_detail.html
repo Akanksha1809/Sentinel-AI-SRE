@@ -1,0 +1,124 @@
+{% extends "base.html" %}
+{% block title %}{{ incident.short_id }} · Sentinel{% endblock %}
+{% block content %}
+<h1>{{ incident.short_id }} — {{ incident.title }}</h1>
+<p>
+  <span class="badge {{ incident.severity }}">{{ incident.severity }}</span>
+  <span class="badge {{ incident.status }}">{{ incident.status }}</span>
+  on <strong>{{ incident.service }}</strong> ({{ incident.environment }})
+</p>
+
+<div class="card">
+  <h3>Telemetry</h3>
+  <p>
+    <a href="{{ incident.links.grafana_dashboard }}" target="_blank" rel="noopener">Grafana dashboard</a> ·
+    <a href="{{ incident.links.prometheus_graph }}" target="_blank" rel="noopener">Prometheus graph</a> ·
+    <a href="{{ incident.links.loki_explore }}" target="_blank" rel="noopener">Loki explore</a> ·
+    <a href="/incidents/{{ incident.short_id }}/postmortem">Postmortem</a>
+  </p>
+</div>
+
+{% if identity.role.satisfies(Role.RESPONDER) and incident.status not in ("resolved", "closed") %}
+<div class="card">
+  <h3>Actions</h3>
+  <form class="inline" method="post" action="/incidents/{{ incident.short_id }}/acknowledge">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Acknowledge</button>
+  </form>
+  <form class="inline" method="post" action="/incidents/{{ incident.short_id }}/evidence/refresh">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Refresh evidence</button>
+  </form>
+  <form class="inline" method="post" action="/incidents/{{ incident.short_id }}/investigations">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Request investigation</button>
+  </form>
+  <form method="post" action="/incidents/{{ incident.short_id }}/resolve" style="margin-top:0.75rem">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="reason">Resolve with reason</label>
+    <input type="text" id="reason" name="reason" minlength="3" maxlength="2000" required>
+    <p><button type="submit" class="primary">Resolve</button></p>
+  </form>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Observations (evidence)</h2>
+  {% if evidence %}
+  <p class="muted">{{ evidence.status }} · collected {{ evidence.finished_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC</p>
+  <table>
+    <thead><tr><th>Ref</th><th>Kind</th><th>Title</th><th>Summary</th></tr></thead>
+    <tbody>
+      {% for item in evidence.items %}
+      <tr>
+        <td><code>{{ item.ref }}</code></td>
+        <td>{{ item.kind }}</td>
+        <td>{{ item.title }}</td>
+        <td>{{ item.summary }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No evidence collected yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>AI Hypotheses</h2>
+  <p class="muted">Machine-generated, never a fact. Verify against Observations above.</p>
+  {% for inv in investigations %}
+  <h3>
+    {% if inv.is_mock %}<span class="badge mock">MOCK</span>{% else %}<span class="badge mock">{{ inv.model }}</span>{% endif %}
+    — {{ inv.status }}
+  </h3>
+  {% if inv.error %}<p class="diff-mismatch">{{ inv.error }}</p>{% endif %}
+  {% for h in inv.hypotheses %}
+  <div class="ai-hypothesis {{ 'uncited' if h.uncited else '' }}">
+    <p class="warn-label">[AI] {{ h.kind }} (confidence {{ "%.2f"|format(h.confidence) }}){% if h.uncited %} — uncited{% endif %}</p>
+    <p>{{ h.statement }}</p>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="muted">No investigation has run for this incident.</p>
+  {% endfor %}
+</div>
+
+<div class="card">
+  <h2>Remediation actions</h2>
+  {% if actions %}
+  <table>
+    <thead><tr><th>Runbook</th><th>Status</th><th>Mode</th><th></th></tr></thead>
+    <tbody>
+      {% for a in actions %}
+      <tr>
+        <td><code>{{ a.runbook_id }}</code></td>
+        <td><span class="badge {{ a.status }}">{{ a.status }}</span></td>
+        <td>{{ "live" if not a.dry_run else "dry-run" }}</td>
+        <td><a href="/actions/{{ a.id }}">details</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">No remediation proposed yet.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Timeline</h2>
+  <table>
+    <thead><tr><th>At</th><th>Kind</th><th>Actor</th><th>Summary</th></tr></thead>
+    <tbody>
+      {% for e in incident.timeline %}
+      <tr>
+        <td>{{ e.at.strftime("%H:%M:%S") }}</td>
+        <td>{{ e.kind }}</td>
+        <td>{{ e.actor }}</td>
+        <td>{{ e.summary }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

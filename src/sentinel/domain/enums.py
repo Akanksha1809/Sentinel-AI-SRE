@@ -85,6 +85,9 @@ class EventKind(StrEnum):
     ACTION_VERIFYING = "action.verifying"
     ACTION_VERIFIED = "action.verified"
     ACTION_VERIFICATION_FAILED = "action.verification_failed"
+    POSTMORTEM_GENERATED = "postmortem.generated"
+    POSTMORTEM_EDITED = "postmortem.edited"
+    POSTMORTEM_FINALIZED = "postmortem.finalized"
 
 
 class ActionStatus(StrEnum):

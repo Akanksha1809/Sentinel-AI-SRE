@@ -478,3 +478,30 @@ class Verification(Base):
     finished_at: Mapped[datetime | None]
 
     action_request: Mapped[ActionRequest] = relationship(back_populates="verifications")
+
+
+class Postmortem(Base):
+    """One incident's postmortem. Regenerating a draft replaces its content in place
+    (unlike evidence/investigations, there is deliberately only ever one row per
+    incident — a postmortem is a living document, not a sequence of immutable runs).
+    `generated_sections` names which top-level sections were last machine-written
+    (from the timeline/evidence/investigation/actions) versus human-authored, so the
+    UI can show "regenerating this will overwrite your edits" accurately.
+    """
+
+    __tablename__ = "postmortems"
+
+    id: Mapped[uuid.UUID] = _pk()
+    incident_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("incidents.id", ondelete="RESTRICT"), unique=True
+    )
+    status: Mapped[str] = mapped_column(String(10), server_default=text("'draft'"))
+    markdown: Mapped[str] = mapped_column(Text)
+    generated_sections: Mapped[list[str]] = mapped_column(ARRAY(String(40)))
+    authored_by: Mapped[str] = mapped_column(String(120))
+    created_at: Mapped[datetime]
+    updated_at: Mapped[datetime]
+    finalized_at: Mapped[datetime | None]
+    finalized_by: Mapped[str | None] = mapped_column(String(120))
+
+    __table_args__ = (CheckConstraint("status IN ('draft','final')", name="status"),)

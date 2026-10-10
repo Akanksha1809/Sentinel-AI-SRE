@@ -17,6 +17,7 @@ SECRETS=(
   sentinel_migrator_db_password
   sentinel_app_db_password
   sentinel_admin_token
+  sentinel_ui_secret
 )
 
 mkdir -p secrets

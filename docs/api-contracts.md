@@ -1,6 +1,6 @@
 # Sentinel — API Contracts (v1)
 
-Base path `/api/v1`. All JSON. Auth: `Authorization: Bearer <token>`. The UI uses a session cookie plus a CSRF header.
+Base path `/api/v1`. All JSON. Auth: `Authorization: Bearer <token>`. The UI (Phase 7, below) uses a session cookie plus a CSRF token in a hidden form field — not a header, since the UI has no client-side JavaScript to set one.
 Every response carries `X-Correlation-ID`, which echoes the request header if valid or is generated otherwise.
 Errors use RFC 9457 `application/problem+json`: `{type, title, status, detail, correlation_id}`.
 FastAPI generates the OpenAPI spec at `/api/v1/openapi.json`. The contract tests in Phase 3 snapshot it.
@@ -72,13 +72,19 @@ Server-side additions, which the model cannot set: `provider`, `model`, `generat
 
 ## Reports and audit
 
+As implemented, there is no separate `/summary` endpoint — the postmortem's generated
+`summary` section (part of the one Markdown document below) already covers that, and a
+second endpoint returning the same facts in a different shape had no consumer.
+
 | Method | Path | Role | Notes |
 |---|---|---|---|
-| GET | `/incidents/{id}/summary` | viewer | Markdown/JSON incident summary |
-| POST | `/incidents/{id}/postmortem` | responder | Generate a draft from the timeline + evidence + investigation + actions |
-| GET/PUT | `/incidents/{id}/postmortem` | viewer / responder | Read/edit Markdown. `PUT` with `status=final` is audited |
+| POST | `/incidents/{ref}/postmortem` | responder | `201 Postmortem`. Generates (or regenerates) the draft from the timeline + evidence + investigation hypotheses + action history — never a new AI call, only already-stored facts. A regenerate rebuilds the generated sections (`summary`, `impact`, `timeline`, `root_cause`, `evidence`, `remediation`) and preserves the two human-authored ones (`lessons_learned`, `follow_ups`) verbatim. `409` if already finalized |
+| GET | `/incidents/{ref}/postmortem` | viewer | `Postmortem`. `404` until the first `POST` |
+| PUT | `/incidents/{ref}/postmortem` | responder | `{markdown, finalize?: bool}` → replaces the whole document (not a per-section diff). `finalize: true` locks it — audited, irreversible, further `POST`/`PUT` then `409`. (Deviation from the Phase 1 sketch's `{status: "final"}` body shape; `finalize` reads more clearly as a one-way action than a settable field) |
 | GET | `/audit?subject_id=&since=` | approver | `AuditEvent[]` |
 | GET | `/audit/verify` | admin | `{ok, checked, first_bad_seq?}` |
+
+`Postmortem`: `{id, incident_id, status: "draft"\|"final", markdown, generated_sections: string[], authored_by, created_at, updated_at, finalized_at, finalized_by}`.
 
 ## Actuator API (internal, called by the Sentinel worker only)
 
@@ -95,6 +101,28 @@ Auth: a bearer token separate from the Sentinel tokens. Every mutating call need
 | GET | `/v1/sd/targets` | — | Prometheus `http_sd_configs` format |
 | GET | `/metrics`, `/healthz`, `/readyz` | — | fleet metrics |
 
-## Web UI routes (server-rendered)
+## Web UI routes (server-rendered, Phase 7)
 
-`/` incidents list · `/incidents/{id}` detail (Observations | AI Hypotheses (badge: MOCK / model name) | Actions | Timeline | Telemetry links) · `/actions/{id}` approval page · `/incidents/{id}/postmortem` · `/runbooks` · `/audit` · `/login`.
+Separate auth from the JSON API above: a signed, stateless, HttpOnly `sentinel_session`
+cookie (`POST /login` with an existing API token exchanges it for one — there is no
+separate password system) rather than a Bearer token. Every mutating route also requires
+a hidden `csrf_token` form field (Synchronizer Token Pattern — an HMAC over the session
+cookie itself, not stored server-side). See `docs/threat-model.md` T5/T14 for why this
+ended up as plain forms with no client-side JavaScript at all, rather than the originally
+sketched htmx: `script-src 'none'` in the CSP, stricter than planned, not weaker.
+
+| Method | Path | Role | Notes |
+|---|---|---|---|
+| GET/POST | `/login` | — | Token → session cookie. `next` carries where to return to (validated to same-origin only) |
+| POST | `/logout` | any session | Clears the cookie |
+| GET | `/` | viewer | Incident list |
+| GET | `/incidents/{ref}` | viewer | Detail: telemetry links, Observations (evidence) vs. AI Hypotheses (MOCK/model badge) split, remediation actions, timeline, plus acknowledge/resolve/evidence-refresh/investigation-request forms for responders |
+| POST | `/incidents/{ref}/acknowledge`, `/resolve`, `/notes`, `/evidence/refresh`, `/investigations` | responder | Same effect as the matching JSON endpoint, via a form |
+| GET | `/actions/{id}` | viewer | Parameters, rationale, cited evidence, and a runbook-content check (the action's bound `sha256` vs. the catalogue's current one for that runbook id — a mismatch is exactly what makes approval fail with 409, shown before the approver clicks anything); approve/reject forms for approvers |
+| POST | `/actions/{id}/approve`, `/reject` | approver | |
+| GET | `/incidents/{ref}/postmortem` | viewer | View; generate/edit/finalize forms for responders (locked, read-only once final) |
+| POST | `/incidents/{ref}/postmortem/generate`, `/edit`, `/finalize` | responder | |
+| GET | `/runbooks` | viewer | Catalogue |
+| GET | `/audit` | approver | Audit log |
+
+Every page carries a persistent DRY-RUN/LIVE banner reflecting `SENTINEL_EXECUTION_MODE`.

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+import html
 from collections.abc import Mapping
 from typing import Any
 
 import structlog
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from sqlalchemy.orm.exc import StaleDataError
 from starlette.exceptions import HTTPException
 
@@ -23,6 +24,8 @@ from sentinel.remediation.service import (
     ActionNotFoundError,
     RunbookChangedError,
 )
+from sentinel.reports.service import PostmortemFinalizedError, PostmortemNotFoundError
+from sentinel.web.deps import LoginRequiredError
 
 log = structlog.get_logger("sentinel.errors")
 _TITLES = {
@@ -54,10 +57,27 @@ def problem(
     )
 
 
+def _html_error(status: int, detail: str) -> HTMLResponse:
+    title = _TITLES.get(status, "Error")
+    return HTMLResponse(
+        f"<!doctype html><html><head><meta charset='utf-8'><title>{title}</title></head>"
+        f"<body style='font-family:system-ui;max-width:40rem;margin:4rem auto;padding:0 1rem'>"
+        f"<h1>{status} {title}</h1><p>{detail}</p><p><a href='/'>Back to incidents</a></p>"
+        f"</body></html>",
+        status_code=status,
+    )
+
+
 def install(app: FastAPI) -> None:
+    @app.exception_handler(LoginRequiredError)
+    async def _login_required(request: Request, _: LoginRequiredError) -> RedirectResponse:
+        return RedirectResponse(f"/login?next={request.url.path}", status_code=303)
+
     @app.exception_handler(HTTPException)
-    async def _http(_: Request, exc: HTTPException) -> JSONResponse:
-        return problem(exc.status_code, str(exc.detail), headers=exc.headers)
+    async def _http(request: Request, exc: HTTPException) -> JSONResponse | HTMLResponse:
+        if request.url.path.startswith("/api/"):
+            return problem(exc.status_code, str(exc.detail), headers=exc.headers)
+        return _html_error(exc.status_code, html.escape(str(exc.detail)))
 
     @app.exception_handler(RequestValidationError)
     async def _validation(_: Request, exc: RequestValidationError) -> JSONResponse:
@@ -101,6 +121,14 @@ def install(app: FastAPI) -> None:
     @app.exception_handler(ParameterError)
     async def _bad_parameters(_: Request, exc: ParameterError) -> JSONResponse:
         return problem(422, str(exc))
+
+    @app.exception_handler(PostmortemNotFoundError)
+    async def _postmortem_not_found(_: Request, exc: PostmortemNotFoundError) -> JSONResponse:
+        return problem(404, f"no postmortem draft exists yet for incident {exc}")
+
+    @app.exception_handler(PostmortemFinalizedError)
+    async def _postmortem_finalized(_: Request, exc: PostmortemFinalizedError) -> JSONResponse:
+        return problem(409, str(exc))
 
     @app.exception_handler(Exception)
     async def _unhandled(_: Request, exc: Exception) -> JSONResponse:

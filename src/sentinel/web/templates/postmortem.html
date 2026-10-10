@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Postmortem {{ incident_ref }} · Sentinel{% endblock %}
+{% block content %}
+<h1>Postmortem — {{ incident_ref }}</h1>
+
+{% if postmortem %}
+<p>
+  <span class="badge {{ 'ok' if postmortem.status == 'final' else 'pending_approval' }}">{{ postmortem.status }}</span>
+  last updated {{ postmortem.updated_at.strftime("%Y-%m-%d %H:%M:%S") }} UTC by {{ postmortem.authored_by }}
+  {% if postmortem.finalized_by %}· finalized by {{ postmortem.finalized_by }}{% endif %}
+</p>
+
+{% if identity.role.satisfies(Role.RESPONDER) and postmortem.status != "final" %}
+<div class="card">
+  <h2>Regenerate</h2>
+  <p class="muted">Rebuilds the generated sections ({{ postmortem.generated_sections|join(", ") }}) from current data. Your edits to Lessons Learned / Follow-ups are kept.</p>
+  <form method="post" action="/incidents/{{ incident_ref }}/postmortem/generate">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit">Regenerate draft</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Edit</h2>
+  <form method="post" action="/incidents/{{ incident_ref }}/postmortem/edit">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label for="markdown">Markdown</label>
+    <textarea id="markdown" name="markdown" maxlength="200000" required>{{ postmortem.markdown }}</textarea>
+    <p><button type="submit" class="primary">Save</button></p>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Finalize</h2>
+  <p class="muted">Locks the <em>currently saved</em> document (save your edits above first). This cannot be undone.</p>
+  <form method="post" action="/incidents/{{ incident_ref }}/postmortem/finalize">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <label>
+      <input type="checkbox" name="confirm" value="true" required style="width:auto;display:inline">
+      I understand finalizing is permanent and this postmortem can never be edited again
+    </label>
+    <p><button type="submit" class="danger">Finalize</button></p>
+  </form>
+</div>
+{% else %}
+<div class="card">
+  <h2>Document</h2>
+  <pre class="markdown">{{ postmortem.markdown }}</pre>
+</div>
+{% endif %}
+
+{% else %}
+<div class="card">
+  <p class="muted">No postmortem has been generated yet.</p>
+  {% if identity.role.satisfies(Role.RESPONDER) %}
+  <form method="post" action="/incidents/{{ incident_ref }}/postmortem/generate">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <button type="submit" class="primary">Generate draft</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

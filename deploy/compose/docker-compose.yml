@@ -208,7 +208,7 @@ services:
       SENTINEL_INVESTIGATION_TIMEOUT_S: ${SENTINEL_INVESTIGATION_TIMEOUT_S:-300}
       HEALTHCHECK_URL: http://127.0.0.1:8080/healthz
     secrets: [sentinel_app_db_password, alertmanager_webhook_token, deployer_token,
-              sentinel_admin_token]
+              sentinel_admin_token, sentinel_ui_secret]
     ports: ["127.0.0.1:8080:8080"]
     networks: [data, obs, app]
     depends_on:
@@ -417,3 +417,4 @@ secrets:
   sentinel_migrator_db_password: { file: ../../secrets/sentinel_migrator_db_password }
   sentinel_app_db_password: { file: ../../secrets/sentinel_app_db_password }
   sentinel_admin_token: { file: ../../secrets/sentinel_admin_token }
+  sentinel_ui_secret: { file: ../../secrets/sentinel_ui_secret }

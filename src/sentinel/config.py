@@ -80,12 +80,18 @@ class Settings(BaseSettings):
     action_execute_max_attempts: int = Field(default=3, ge=1, le=10)
     action_sweep_interval_s: int = Field(default=30, ge=5, le=300)
 
+    # Web UI (Phase 7). Session cookie + CSRF token are both HMAC'd under `ui_secret`
+    # (see sentinel.web.session); neither is stored server-side. Cookies are marked
+    # `Secure` outside `environment=local`, where the stack is plain HTTP on loopback.
+    ui_session_max_age_s: int = Field(default=12 * 3600, ge=60, le=7 * 86_400)
+
     # Secrets (loaded by `load_settings`; may be injected directly in tests).
     db_password: SecretStr | None = None
     webhook_token: SecretStr | None = None
     deployer_token: SecretStr | None = None
     bootstrap_admin_token: SecretStr | None = None
     actuator_token: SecretStr | None = None
+    ui_secret: SecretStr | None = None
 
     @property
     def reopen_window(self) -> timedelta:
@@ -102,6 +108,10 @@ class Settings(BaseSettings):
     @property
     def dry_run_default(self) -> bool:
         return self.execution_mode == "dry_run"
+
+    @property
+    def cookie_secure(self) -> bool:
+        return self.environment != "local"
 
     def database_url(self) -> str:
         from sqlalchemy.engine import URL
@@ -123,6 +133,7 @@ SECRET_FILES = {  # nosec B105
     "deployer_token": "deployer_token",
     "bootstrap_admin_token": "sentinel_admin_token",
     "actuator_token": "actuator_token",
+    "ui_secret": "sentinel_ui_secret",
 }
 
 

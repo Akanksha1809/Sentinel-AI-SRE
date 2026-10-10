@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Sentinel{% endblock %}</title>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  {% if identity %}
+  <header class="topbar">
+    <span class="brand">Sentinel</span>
+    <nav>
+      <a href="/">Incidents</a>
+      <a href="/runbooks">Runbooks</a>
+      {% if identity.role.satisfies(Role.APPROVER) %}<a href="/audit">Audit</a>{% endif %}
+    </nav>
+    <span class="who">{{ identity.name }} ({{ identity.role.value }})</span>
+    <form class="inline" method="post" action="/logout">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button type="submit">Log out</button>
+    </form>
+  </header>
+  {% endif %}
+  <div class="banner {{ 'live' if execution_mode == 'live' else 'dry-run' }}">
+    {{ 'LIVE — remediation can change the real fleet' if execution_mode == 'live'
+       else 'DRY-RUN — remediation is simulated only' }}
+  </div>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

@@ -30,6 +30,7 @@ APP_PW = "app_test_password_12345"
 WEBHOOK_TOKEN = "webhook-test-token-0123456789"
 DEPLOYER_TOKEN = "deployer-test-token-0123456789"
 ADMIN_TOKEN = "snt_admin_test_token_0123456789"
+UI_SECRET = "ui-test-secret-0123456789abcdef"
 
 
 def _configure_docker_for_testcontainers() -> None:
@@ -127,6 +128,7 @@ def settings(clean_db: PgInfo) -> Any:
         webhook_token=SecretStr(WEBHOOK_TOKEN),
         deployer_token=SecretStr(DEPLOYER_TOKEN),
         bootstrap_admin_token=SecretStr(ADMIN_TOKEN),
+        ui_secret=SecretStr(UI_SECRET),
         reopen_window_s=600,
         runbooks_dir=RUNBOOKS_DIR,
     )

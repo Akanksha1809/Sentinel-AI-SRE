@@ -3,7 +3,7 @@
 _Resumable work log. Update at the end of every work session. Only record results backed by command output._
 
 ## Current phase
-**Phase 6: Policy, approvals, execution, verification. Complete (2026-10-09).** Next: Phase 7 (dashboard UI, incident summaries, postmortems).
+**Phase 7: Dashboard UI, reports, postmortems. Complete (2026-10-10).** Next: Phase 8 (E2E, CI hardening, docs, demos).
 
 ## Phase checklist
 | Phase | Status | Evidence |
@@ -14,7 +14,7 @@ _Resumable work log. Update at the end of every work session. Only record result
 | 4. Evidence gathering | ✅ 2026-10-09 | See "Phase 4 results" below |
 | 5. AI investigation | ✅ 2026-10-09 | See "Phase 5 results" below |
 | 6. Runbooks, approvals, execution, verification | ✅ 2026-10-09 | See "Phase 6 results" below. **K8s actuator + dedicated kind cluster deferred** (see Decisions) |
-| 7. UI, reports, postmortems | ⏳ Next | |
+| 7. UI, reports, postmortems | ✅ 2026-10-10 | See "Phase 7 results" below. **No htmx** (deviation, see Decisions) |
 | 8. E2E, CI hardening, docs, demos | ⏳ (basic CI added early in Phase 2) | |
 
 ## Decisions (from the user, 2026-10-09)
@@ -22,6 +22,7 @@ _Resumable work log. Update at the end of every work session. Only record result
 2. LLM: originally the installed `qwen2.5-coder:7b`; **switched to `qwen2.5-coder:3b`** as the default in Phase 5 follow-up (same quality, ~12x faster on this host; see below).
 3. Kubernetes: create a **separate `sentinel` kind cluster**. **Deferred past Phase 6**, with your implicit go-ahead via "start phase 6" after Phase 6's scope (policy/approvals/execution/verification) turned out substantial on its own; the Docker actuator already fully satisfies the Phase 6 exit criterion. Revisit as a stretch addition — never touch `kind-ai-platform-engineer` either way.
 4. GitHub: private repo **Akanksha1809/Sentinel-AI-SRE**; push at the end of each phase.
+5. UI tech, **my own call in Phase 7** (no htmx): the Phase 1 sketch called for "Jinja2 + vendored htmx". This environment has no way to fetch or verify a third-party JS file against the no-CDN/no-Node-toolchain constraint already in place, and a CSRF *header* (also sketched) can only be set by client-side JS — which htmx would have supplied. Built plain Jinja2 + HTML forms instead, with CSRF as a hidden form field (Synchronizer Token Pattern, stateless HMAC over the session cookie). Net effect: the UI needs no JavaScript at all, and the CSP ships as `script-src 'none'` rather than `'self'` — stricter than planned. See `docs/threat-model.md` T5/T14 and "Phase 7 results" below.
 
 ## What exists (Phase 2)
 - `services/demo-app` (**shop-api**): RED metrics, JSON logs with request IDs, deterministic faults. Release 1.1.0 nulls prices for products 6–10. Config `POOL_SIZE=0` fails startup. Chaos endpoints (memory, latency, cpu) are bounded, token-protected and self-expiring.
@@ -30,6 +31,21 @@ _Resumable work log. Update at the end of every work session. Only record result
 - `services/loadgen`: seeded fixed-rate traffic (10 rps; about 20% error exposure on release 1.1.0).
 - Compose stack: Prometheus (SLI recording rules, burn-rate and saturation alerts), Alertmanager (webhook to Sentinel with a secret-file bearer token), Loki + Alloy, Grafana (generated dashboard), Postgres (ready for Phase 3), two socket proxies.
 - Policy tests for Compose security invariants; promtool rule unit tests; basic GitHub Actions CI.
+
+## What exists (Phase 7)
+- `src/sentinel/reports/markdown.py`: pure, DB-free Markdown assembly. Fixed section order (`summary, impact, timeline, root_cause, evidence, remediation` generated; `lessons_learned, follow_ups` human-authored), each wrapped in an HTML-comment marker so a regenerate can tell which parts it owns and preserve the human ones verbatim.
+- `src/sentinel/reports/service.py` (`PostmortemService`): gathers facts from the existing ORM models (never a new AI call — the `root_cause` section replays already-stored investigation hypotheses, each rendered with an explicit `[AI, <provider>]` marker and a "not confirmed facts" banner), generate/regenerate (preserving human edits), edit (full-document replace), finalize (locks it, irreversible), full audit trail (`postmortem.generated/edited/finalized` events).
+- Migration 0005: `postmortems` (one row per incident, unique FK; app role gets UPDATE too, unlike the insert-only/immutable evidence/investigation/action tables).
+- API: `POST/GET/PUT /incidents/{ref}/postmortem` (`src/sentinel/api/routes/postmortems.py`); two new domain errors (`PostmortemNotFoundError` → 404, `PostmortemFinalizedError` → 409) registered in `api/errors.py`.
+- `src/sentinel/web/`: server-rendered Jinja2 UI, **no htmx/JS** (Decision 5 above) — session cookie auth (`session.py`: stateless HMAC `name|role|issued_at`, 12h expiry) separate from the JSON API's Bearer tokens; CSRF as a hidden `csrf_token` form field (HMAC over the session cookie, checked against the POST body); strict CSP (`csp.py`: `script-src 'none'`, `frame-ancestors 'none'`, no inline anything). Pages: `/login`, `/` (incident list), `/incidents/{ref}` (Observations vs. AI Hypotheses split, MOCK/model badge, telemetry links, responder action forms), `/actions/{id}` (parameters + a runbook-content check — bound sha256 vs. the current catalogue, which is exactly what `/approve` itself checks, shown before the approver clicks anything), `/incidents/{ref}/postmortem` (generate/edit/finalize), `/runbooks`, `/audit`. Persistent DRY-RUN/LIVE banner on every page.
+- New secret `sentinel_ui_secret` (HMAC key for sessions and CSRF), wired through `scripts/gen-secrets.sh`, `deploy/compose/docker-compose.yml`, and `Settings`.
+
+## Phase 7 results (2026-10-10)
+- Lint and strict mypy clean (73 source files); full suite **496 passed** (431 carried over + 24 unit tests on the pure Markdown module + 12 unit tests on session/CSRF + 8 integration tests on the postmortem API + 21 integration tests on the web UI); bandit clean; pip-audit clean; promtool/amtool OK.
+- **Live, against the real running stack:** rebuilt `sentinel/sentinel:dev`, applied migration 0005 (`0004 → 0005`), redeployed `sentinel-api`/`sentinel-worker` (both healthy, `/readyz` reports `migrations.current == migrations.expected == "0005"`). Logged into the UI with the real admin token; the incident list rendered 15 real incidents from Phases 2–6. Opened **INC-0011** (the Phase 6 exit-criterion incident) — Observations showed all 15 real evidence items, AI Hypotheses showed both MOCK investigation runs clearly labelled, Remediation showed both the failed-verification and the eventually-successful `rollback-deployment` attempts, and the full 30-event timeline rendered correctly. Clicked **Generate draft** on its postmortem page — produced a complete, accurate Markdown document from real data (confirmed via `GET /api/v1/incidents/INC-0011/postmortem`) and the `postmortem.generated` event appeared at the top of the live `/audit` page (seq 180) with the correct actor and hash chain. Checked the action-approval page for the same incident's `rollback-deployment`: parameters, rationale, cited evidence, and a runbook-content check correctly reporting the bound sha256 still matches the current catalogue. `/runbooks` rendered the full catalogue. No errors in `sentinel-api`/`sentinel-worker` logs across the session.
+- **Deviation decided and recorded, not silently dropped:** no htmx (see Decision 5). The UI ships with zero client-side JavaScript and a `script-src 'none'` CSP — stricter than the Phase 1 sketch, not weaker.
+- **Tests, beyond the golden-path:** CSRF — missing token, wrong token, and (most importantly) a token scraped from one session rejected when replayed against a *different* session's cookie, proving the token is actually bound to the session and not just "any token shape accepted". RBAC — a viewer sees no mutating forms and is refused (403) even with a stolen-but-valid CSRF token if they POST directly; a non-approver can't reach `/audit`. XSS — a `<script>` payload placed in an Alertmanager alert's `summary` field (which becomes the incident title) is confirmed HTML-escaped on both the incident list and detail pages, not just "assumed safe because Jinja". Open-redirect — `/login?next=` is validated to same-origin only.
+- No new live bugs found this phase (unlike Phases 4–6) — Phase 7 added a new read/write surface over already-tested services rather than new PromQL/LLM/actuator logic, so the bug classes that bit earlier phases (query semantics, non-finite values, real-world timing) didn't apply here.
 
 ## What exists (Phase 6)
 - `src/sentinel/domain/actions.py`: `ActionRequest` state machine (`proposed → pending_approval → approved → executing → verifying → succeeded`, with `rejected/expired/failed/verification_failed/cancelled` terminals; a failed verification never auto-retries — a fresh proposal is required).
