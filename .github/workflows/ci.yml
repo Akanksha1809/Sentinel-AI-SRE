@@ -87,8 +87,16 @@ jobs:
         run: uv sync --all-packages --frozen
       - name: Generate secrets
         run: ./scripts/gen-secrets.sh
+      - name: Build images
+        # `up --build` only rebuilds services with their *own* build: stanza -
+        # sentinel-api/sentinel-worker/docker-guard just reference sentinel/sentinel:dev
+        # and sentinel/actuator:dev by tag, so --build silently skips them and `up`
+        # falls back to pulling a nonexistent registry image. Build everything that
+        # has a build stanza first (same as the `images` job / `make images`), then
+        # `up` without --build so it uses what's already tagged locally.
+        run: docker compose -f deploy/compose/docker-compose.yml --profile images build
       - name: Start the stack in live execution mode
-        run: SENTINEL_EXECUTION_MODE=live docker compose -f deploy/compose/docker-compose.yml up -d --build
+        run: SENTINEL_EXECUTION_MODE=live docker compose -f deploy/compose/docker-compose.yml up -d
       - name: Wait for readiness
         run: ./scripts/wait-ready.sh
       - name: Run e2e scenarios
