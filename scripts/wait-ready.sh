@@ -10,6 +10,7 @@ declare -a CHECKS=(
   "alloy|http://127.0.0.1:12345/-/ready"
   "grafana|http://127.0.0.1:3000/api/health"
   "actuator|http://127.0.0.1:8085/readyz"
+  "sentinel-api|http://127.0.0.1:8080/readyz"
 )
 
 deadline=$(( $(date +%s) + TIMEOUT ))

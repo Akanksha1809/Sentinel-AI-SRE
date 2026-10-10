@@ -23,7 +23,7 @@ services:
   # ---------------------------------------------------------------- docker access
   socket-proxy-rw:
     <<: *hardening
-    image: wollomatic/socket-proxy:1.13.1
+    image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
     user: "65534:991"  # nobody + the VM's docker socket group (see docs/troubleshooting.md)
     read_only: true
     mem_limit: 32m
@@ -52,7 +52,7 @@ services:
 
   socket-proxy-ro:
     <<: *hardening
-    image: wollomatic/socket-proxy:1.13.1
+    image: wollomatic/socket-proxy:1.13.1@sha256:3935b709275e4ec35d6ed5a5c4a1f0d01ed31eec5e7234efc3357ecd47689002
     user: "65534:991"
     read_only: true
     mem_limit: 32m
@@ -249,7 +249,7 @@ services:
   # ---------------------------------------------------------------- observability
   prometheus:
     <<: *hardening
-    image: prom/prometheus:v3.13.4
+    image: prom/prometheus:v3.13.4@sha256:87861b8cf91579109319ebc300f3f1060e6da9c05d6ae8ad15a20c879e84e32e
     read_only: true
     mem_limit: 384m
     labels: *loggable
@@ -271,7 +271,7 @@ services:
 
   alertmanager:
     <<: *hardening
-    image: prom/alertmanager:v0.34.1
+    image: prom/alertmanager:v0.34.1@sha256:e9733bafb1bdef9b00e25a21f8f99dc26a22224bf16641ad754d1649f4c3357a
     read_only: true
     mem_limit: 64m
     labels: *loggable
@@ -293,7 +293,7 @@ services:
 
   loki:
     <<: *hardening
-    image: grafana/loki:3.7.8
+    image: grafana/loki:3.7.8@sha256:1107dd5274e0ada47e42472b7a7e71f3b2a2fe878878108f3e2f9e51528f0193
     read_only: true
     mem_limit: 256m
     command: ["-config.file=/etc/loki/loki.yml"]
@@ -307,7 +307,7 @@ services:
 
   alloy:
     <<: *hardening
-    image: grafana/alloy:v1.20.1
+    image: grafana/alloy:v1.20.1@sha256:2aa2099af76c0098d4af7a4d6e48f86cb66dc1a000222ad927a1c67c6542d13f
     user: "473:473"
     read_only: true
     mem_limit: 192m  # measured ~100MiB
@@ -332,7 +332,7 @@ services:
 
   grafana:
     <<: *hardening
-    image: grafana/grafana:13.2.3
+    image: grafana/grafana:13.2.3@sha256:b28bae15e219c998fb0e0424ed724930cc61b1f61fb404d47c862f9a23f9e572
     read_only: true
     mem_limit: 384m  # measured ~230MiB idle
     environment:
@@ -366,7 +366,7 @@ services:
   # ---------------------------------------------------------------- data
   postgres:
     <<: *hardening
-    image: postgres:18.6
+    image: postgres:18.6@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
     # The entrypoint needs these to drop from root to the postgres user.
     cap_add: [CHOWN, DAC_OVERRIDE, FOWNER, SETGID, SETUID]
     mem_limit: 256m

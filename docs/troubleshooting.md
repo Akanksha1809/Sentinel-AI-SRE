@@ -110,3 +110,65 @@ match requires *identical* label sets and otherwise silently returns nothing, fo
 `remediation/verifier.py` and was fixed with `on(service)`; if you add a new
 verification signal that divides metrics from different sources, check its rendered
 query directly against `/api/v1/query` before trusting it in a runbook.
+
+## `sentinel-demo` scenario B/C fails with `httpx.ReadTimeout` or `RemoteProtocolError`
+A real container replace with health checks (what a deploy/restart runbook actually
+does) measured ~11s for a two-replica rolling replace on a loaded host — too slow for
+a naive 10s HTTP client timeout, even though the actuator finishes the work fine. The
+demo client (`sentinel.demo.client.SentinelDemoClient`) now uses 60s for actuator
+calls and 30s for the Sentinel API. If you hit this writing your own tooling against
+the actuator or Sentinel API, size the client timeout for container lifecycle
+operations, not request/response latency.
+
+## `sentinel-demo run <scenario>` times out waiting for "a new shop-api incident"
+Incidents group by `environment/service`, not by alertname. If a previous scenario's
+incident is still `resolved` (not yet `closed`), a fresh alert within the reopen
+window (`reopen_window_s`, default 600s) *reopens* that old incident instead of
+opening a new one — so `wait_for_incident`'s `opened_at >= started_at` check never
+matches. `sentinel.demo.scenarios._reset_baseline` resolves and closes every
+not-yet-`closed` incident for the service before triggering the next scenario
+(`IncidentService._recently_resolved` matches on `status == resolved` alone, so
+`active=True` filtering alone is not enough — a `resolved` incident is still active
+for reopen purposes even though it isn't "active" in the UI/API sense).
+
+## A scenario recommends the wrong runbook, or rolls back without fixing anything, when run shortly after another scenario
+Two distinct causes, one fixed in code, one inherent to time-windowed evidence —
+both stem from evidence correlation looking back a full hour (`CHANGE_LOOKBACK` in
+`evidence/collector.py`), which is the *correct* design for real incidents (a
+deployment an hour ago can still be the cause) but collides with synthetic fault
+injection run far closer together than any real incident history would be.
+
+**Cross-alert-type (e.g. scenario A gets a `rollback-deployment` recommendation for
+a pure memory-pressure incident): this was a real bug, fixed.** A recent deployment
+from a *different* scenario could outscore an incident's own alert type purely on
+recency, even though `rollback-deployment` doesn't list that alert
+(`ShopApiMemoryPressure`/`ShopApiHighCPU`) in its own `applies_to_alerts` at all. This
+reproduced even on an otherwise-fresh stack, minutes after a single prior deployment
+— not just on a long-lived, reused one. Fixed in `src/sentinel/investigation/providers.py`
+(`MockProvider` now gates the correlation branch on the candidate runbook's
+`applies_to_alerts`); if you're on an older build, update.
+
+**Same-alert-type (scenario C recommends `restart-service` instead of
+`rollback-deployment`, or rolls back to the wrong historical deployment and
+verification then correctly fails): inherent, not a bug, still possible.** Scenario
+C's own signal is intrinsically weak even in isolation: a crash-loop (`POOL_SIZE=0`)
+never completes a request, so there is no "5xx response" metric to attribute to it at
+all, and very few log lines get written before each restart (measured: ~0.435 against
+the mock's 0.6 threshold, even with no other scenario having run at all). Both
+`ShopApiCrashLooping` and `ShopApiHighErrorBurnRate` are in `rollback-deployment`'s
+`applies_to_alerts`, so the fix above doesn't separate them — a stale scenario-B
+deployment still within the lookback window can legitimately outscore scenario C's
+own weak signal. This is why `tests/e2e/test_scenarios.py` runs scenario C first. If
+you hit this interactively, either start from a fresh stack (`make clean && make
+e2e-up`) before running scenario C, or wait a few minutes for the competing
+deployment's `time_factor` to decay (roughly 10 minutes per half-life at this
+evidence window's time constant) before retrying it.
+
+## Chaos memory fault takes much longer than expected to trip `ShopApiMemoryPressure`
+The chaos allocator's async ticks compete with real request traffic (loadgen) and
+whatever else is running on the host; a live run on a loaded 8 GB Mac measured the
+allocation rate falling well behind the fault's nominal `rate_mb_s`. The demo client
+defaults to a more aggressive `rate_mb_s=10.0` (vs. the demo-app's own internal
+default of 2.0) specifically to keep the alert's `for: 30s` window reachable within a
+reasonable demo timeout even under contention; pass a higher value still if your host
+is more loaded than that.

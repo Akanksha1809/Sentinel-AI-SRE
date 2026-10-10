@@ -192,6 +192,37 @@ class TestFaultForwarding:
         r = client.post("/v1/faults/shop-api/chaos/fork-bomb", headers=FAULTS, json={})
         assert r.status_code == 422
 
+    def test_one_unreachable_replica_does_not_fail_the_whole_fan_out(
+        self, fleet: FleetManager
+    ) -> None:
+        """A replica can report "running" and still be momentarily unreachable (e.g.
+        right after a deploy replaced it). That must degrade to a per-replica error,
+        not crash the request for every other replica too."""
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if "shop-api-2" in str(request.url):
+                raise httpx.ConnectError("connection refused", request=request)
+            return httpx.Response(202, json={"ok": True})
+
+        app = create_app(
+            fleet,
+            actuator_token=SecretStr("remediation-token"),
+            fault_token=SecretStr("fault-token"),
+            chaos_token=SecretStr("chaos"),
+            replica_transport=httpx.MockTransport(handler),
+        )
+        with TestClient(app) as c:
+            r = c.post(
+                "/v1/faults/shop-api/chaos/memory",
+                headers=FAULTS,
+                json={"rate_mb_s": 2, "target_rss_mb": 200},
+            )
+        assert r.status_code == 200
+        results = {entry["replica"]: entry for entry in r.json()}
+        assert results[1]["status"] == 202
+        assert results[2]["status"] is None
+        assert "connection refused" in results[2]["error"]
+
     def test_oversized_payload_rejected(self, client: TestClient) -> None:
         r = client.post(
             "/v1/faults/shop-api/chaos/memory",

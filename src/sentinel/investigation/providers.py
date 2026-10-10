@@ -126,6 +126,17 @@ class MockProvider:
         crash_like = bool(alertnames & {"ShopApiCrashLooping", "ShopApiDown"}) or (
             restarts is not None and "Step change" in restarts.summary
         )
+        # A deployment can correlate well with *some* recent incident and still have
+        # nothing to do with *this* one: ShopApiMemoryPressure/ShopApiHighCPU aren't
+        # in rollback-deployment's own applies_to_alerts, so a recent-but-unrelated
+        # deployment must never outrank this incident's own alert type. Unknown
+        # alertnames (empty, or the runbook missing from this catalogue) don't gate —
+        # better a possibly-wrong suggestion than silently disabling the rule for
+        # catalogues/tests that don't carry applies_to_alerts.
+        rollback_alerts = _applies_to_alerts(request.runbooks, "rollback-deployment")
+        deployment_relevant = (
+            not alertnames or rollback_alerts is None or bool(alertnames & rollback_alerts)
+        )
         cite = [
             r
             for r in (
@@ -140,7 +151,7 @@ class MockProvider:
             if r in ev
         ]
 
-        if corr and corr["score"] >= 0.6:
+        if corr and corr["score"] >= 0.6 and deployment_relevant:
             version_cfg = (
                 f"config revision {corr['config_revision']}"
                 if crash_like and corr.get("config_revision")
@@ -268,6 +279,13 @@ def _top_score(view: EvidenceView | None) -> dict[str, Any] | None:
         return None
     scores = view.details.get("scores") or []
     return scores[0] if scores else None
+
+
+def _applies_to_alerts(runbooks: list[dict[str, Any]], runbook_id: str) -> set[str] | None:
+    for r in runbooks:
+        if r.get("id") == runbook_id:
+            return set(r.get("applies_to_alerts", []))
+    return None
 
 
 def _deployment(view: EvidenceView | None, score: dict[str, Any]) -> dict[str, Any] | None:

@@ -273,12 +273,20 @@ def create_app(
         results = []
         async with httpx.AsyncClient(timeout=5.0, transport=replica_transport) as client:
             for c in targets:
-                r = await client.request(
-                    method,
-                    f"http://{c.name}:{svc.port}{path}",
-                    json=body,
-                    headers={"X-Chaos-Token": chaos_token.get_secret_value()},
-                )
+                # A replica reported "running" can still be unreachable for a moment
+                # (e.g. right after a deploy replaced it and its HTTP server hasn't
+                # bound yet); that's one replica's bad luck, not a reason to fail the
+                # whole fan-out or crash the connection the caller is waiting on.
+                try:
+                    r = await client.request(
+                        method,
+                        f"http://{c.name}:{svc.port}{path}",
+                        json=body,
+                        headers={"X-Chaos-Token": chaos_token.get_secret_value()},
+                    )
+                except httpx.TransportError as exc:
+                    results.append({"replica": c.replica, "status": None, "error": str(exc)})
+                    continue
                 results.append(
                     {
                         "replica": c.replica,

@@ -2,7 +2,7 @@
 
 Sentinel detects production-like incidents and correlates metrics and logs with recent changes. It investigates likely root causes with an LLM that is grounded in evidence and has **no tools**, proposes remediation only from an allowlisted runbook catalogue, executes approved actions through a least-privilege actuator, and verifies recovery against measured health signals.
 
-> **Status: Phase 7 of 8 complete.** Alerts become audited incidents; a worker gathers evidence, investigates, and *recommends* an allowlisted runbook. An approver signs off, the actuator executes it, and recovery is only reported after real Prometheus checks pass for several samples in a row. A server-rendered dashboard (session-cookie auth, no client-side JS) covers incident triage, approvals, and a postmortem generator built from stored facts, never a new AI call. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
+> **Status: Phase 8 of 8 complete.** Alerts become audited incidents; a worker gathers evidence, investigates, and *recommends* an allowlisted runbook. An approver signs off, the actuator executes it, and recovery is only reported after real Prometheus checks pass for several samples in a row. A server-rendered dashboard (session-cookie auth, no client-side JS) covers incident triage, approvals, and a postmortem generator built from stored facts, never a new AI call. Three scripted demo scenarios run end to end against the real stack, in CI and locally. See [PROJECT_STATUS.md](PROJECT_STATUS.md).
 
 ## What runs today
 | Component | Role |
@@ -29,9 +29,25 @@ make check   # lint, mypy --strict, tests, bandit, pip-audit
 make down    # stop (make clean also deletes volumes)
 ```
 
+### Try it: run a demo scenario end to end
+
+```bash
+make e2e-up          # stack up, SENTINEL_EXECUTION_MODE=live (a real fix, not a no-op)
+make demo-list       # see what each scenario does
+uv run sentinel-demo run b   # a: memory leak, b: bad release, c: bad config
+```
+
+Narrates fault → alert → incident → (mock) investigation → your approval → real
+actuator remediation → verified recovery, against the actual running stack. `make
+test-e2e` runs the same three scenarios as an automated suite (what CI's `e2e` job
+runs on every push). See [docs/demo-recording.md](docs/demo-recording.md) to capture
+one as an asciinema recording.
+
 ## Design documents
 - [Architecture](docs/architecture.md): components, data flow, decisions, measured scenario timings
 - [Threat model](docs/threat-model.md): including the live Docker boundary probe
 - [Data model](docs/data-model.md) and [API contracts](docs/api-contracts.md)
 - [Implementation plan](docs/implementation-plan.md)
 - [Troubleshooting](docs/troubleshooting.md)
+- [Authoring a runbook](docs/runbook-authoring.md)
+- [Recording a demo](docs/demo-recording.md)

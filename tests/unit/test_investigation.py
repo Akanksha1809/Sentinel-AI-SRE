@@ -388,6 +388,60 @@ class TestMockProvider:
         )
         assert [a["runbook_id"] for a in out.accepted_actions] == ["restart-service"]
 
+    async def test_stale_unrelated_deployment_does_not_outrank_memory_pressure(
+        self, catalog: RunbookCatalog
+    ) -> None:
+        """Live finding (Phase 8 e2e): a recent *different-incident's* deployment can
+        still score >= 0.6 by the time a later, unrelated ShopApiMemoryPressure
+        incident is investigated (evidence correlation looks back up to an hour). It
+        must never outrank this incident's own alert type and win a `rollback`
+        recommendation for an incident deployment never caused."""
+        req = request(
+            view(
+                "metric.memory_ratio",
+                "Step change (replica=1): rose from 15% to 85%",
+                "metric",
+                ["primary"],
+            ),
+            view(
+                "derived.change_correlation",
+                "top",
+                "derived",
+                details={
+                    "scores": [
+                        {
+                            "version": "1.0.0",
+                            "config_revision": "r2",
+                            "score": 0.77,
+                            "reasons": ["deployed 99s before onset"],
+                        }
+                    ]
+                },
+            ),
+            view(
+                "change.deployments",
+                "deps",
+                "change",
+                details={
+                    "deployments": [
+                        {
+                            "previous_version": "1.0.0",
+                            "version": "1.0.0",
+                            "previous_config_revision": "r1",
+                            "config_revision": "r2",
+                        }
+                    ]
+                },
+            ),
+            alertnames=["ShopApiMemoryPressure"],
+            catalog=catalog,
+        )
+        raw = await MockProvider().investigate(req)
+        out = validate_report(
+            raw, evidence_refs={e.ref for e in req.evidence}, catalog=catalog, service=SVC
+        )
+        assert [a["runbook_id"] for a in out.accepted_actions] == ["restart-service"]
+
     async def test_no_signal_means_no_action(self, catalog: RunbookCatalog) -> None:
         req = request(view("metric.error_ratio", "flat", "metric"), catalog=catalog)
         raw = await MockProvider().investigate(req)

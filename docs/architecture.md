@@ -1,7 +1,8 @@
 # Sentinel — Architecture
 
-> Status: Phases 1–7 implemented (target system, monitoring, ingestion/incidents, evidence,
-> investigation, remediation, dashboard UI + postmortems). See `PROJECT_STATUS.md`.
+> Status: Phases 1–8 implemented and complete (target system, monitoring,
+> ingestion/incidents, evidence, investigation, remediation, dashboard UI +
+> postmortems, e2e demo scenarios + CI hardening). See `PROJECT_STATUS.md`.
 
 Sentinel is an AI-assisted SRE incident response platform. It detects incidents
 from real alert signals, collects evidence from metrics, logs and change history,
@@ -273,27 +274,35 @@ Sentinel-AI-SRE/
 │   ├── observability/             # structlog JSON, correlation-id middleware, metrics
 │   ├── api/                       # routers: health, webhooks, incidents, actions, runbooks,
 │   │                              # deployments, postmortems, audit; deps.py, errors.py
-│   └── web/                       # session.py (UI cookie auth + CSRF), csp.py, routes.py,
-│                                  # templates/, static/ (CSS only, no JS)
+│   ├── web/                       # session.py (UI cookie auth + CSRF), csp.py, routes.py,
+│   │                              # templates/, static/ (CSS only, no JS)
+│   └── demo/                      # scenario definitions (scenarios.py), shared polling
+│                                  # client (client.py), `sentinel-demo` CLI (cli.py)
 ├── migrations/                    # alembic
 ├── runbooks/                      # restart-service.yaml, rollback-deployment.yaml, scale-service.yaml
 ├── services/
 │   ├── demo-app/                  # shop-api (own pyproject + Dockerfile)
 │   ├── actuator/                  # fleet agent (own pyproject + Dockerfile)
 │   └── loadgen/
-├── demo/                          # scenario definitions + `sentinel-demo` CLI
 ├── deploy/
-│   ├── compose/docker-compose.yml # + docker-compose.ci.yml override
+│   ├── compose/docker-compose.yml # the one Compose file; CI's e2e job uses it directly
 │   ├── prometheus/{prometheus.yml, rules/}
 │   ├── alertmanager/alertmanager.yml
 │   ├── loki/  alloy/
 │   ├── grafana/{provisioning/, dashboards/}
-│   └── k8s/                       # optional manifests + RBAC
+│   └── actuator/releases.yaml     # release catalogue (shop-api versions/config revisions)
 ├── tests/{unit,integration,api,e2e}/
 ├── docs/                          # architecture, threat model, API, data model, plan,
-│                                  # setup, troubleshooting, runbooks guide, demo recording
+│                                  # troubleshooting, runbook authoring, demo recording
 └── .github/workflows/ci.yml
 ```
+
+`src/sentinel/demo/` lives inside the main package (not a separate top-level `demo/`
+directory as first sketched in Phase 1) — it's a thin HTTP client plus a CLI entry
+point (`sentinel-demo`), not a service that needs its own `pyproject.toml`/Dockerfile,
+so folding it into the existing package avoided packaging it would otherwise need. A
+Kubernetes actuator backend and dedicated `deploy/k8s/` manifests remain optional and
+still deferred, not built — see "Open decisions" below and `PROJECT_STATUS.md`.
 
 ### Component dependency rules (enforced with an import-linter contract in CI)
 

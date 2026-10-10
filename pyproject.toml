@@ -21,6 +21,7 @@ dependencies = [
 
 [project.scripts]
 sentinel = "sentinel.cli:main"
+sentinel-demo = "sentinel.demo.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.24,<0.13"]

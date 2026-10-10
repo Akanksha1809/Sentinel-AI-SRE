@@ -5,9 +5,9 @@
 #   RELEASE_DEFECT / APP_VERSION: baked-in release identity (shop-api only)
 #   HEALTHCHECK_URL: polled by the image HEALTHCHECK
 
-FROM ghcr.io/astral-sh/uv:0.12.24 AS uv
+FROM ghcr.io/astral-sh/uv:0.12.24@sha256:3af4716e991d6956a41e573eab705d0ee08500cd829ed30293eb8472f372c65a AS uv
 
-FROM python:3.12.15-slim AS build
+FROM python:3.12.15-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1 AS build
 COPY --from=uv /uv /usr/local/bin/uv
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -25,7 +25,7 @@ COPY src/ src/
 COPY services/ services/
 RUN uv sync --frozen --no-dev --package "${PACKAGE}" --no-editable
 
-FROM python:3.12.15-slim
+FROM python:3.12.15-slim@sha256:a6e34c598f2467ed0e9a8d349809fcd8b5c603269512df273a0bb1784edc11b1
 RUN useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin app
 COPY --from=build /opt/venv /opt/venv
 COPY runbooks/ /opt/sentinel/runbooks/

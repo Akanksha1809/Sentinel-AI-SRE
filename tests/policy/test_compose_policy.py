@@ -103,11 +103,19 @@ def test_ports_bind_to_loopback_only(services: dict[str, dict[str, Any]]) -> Non
 
 
 def test_images_are_pinned(services: dict[str, dict[str, Any]]) -> None:
+    """Every third-party image (Phase 8): a readable version tag *and* a sha256
+    digest (`name:tag@sha256:...`), so a retagged/compromised upstream image can't
+    silently replace what actually runs — the digest is checked, not just the tag.
+    `sentinel/*` images are built locally from this repo on every run, so there's no
+    upstream digest to pin against."""
     for name, svc in services.items():
         image = svc["image"]
         if image.startswith("sentinel/"):
-            continue  # built locally from this repo
-        tag = image.rsplit(":", 1)[-1] if ":" in image else ""
+            continue
+        assert "@sha256:" in image, f"{name}: image {image} has no digest pin"
+        tagged, digest = image.split("@", 1)
+        assert re.fullmatch(r"sha256:[0-9a-f]{64}", digest), f"{name}: bad digest {digest}"
+        tag = tagged.rsplit(":", 1)[-1] if ":" in tagged else ""
         # exact release: x.y.z, or x.y for projects (like postgres) without a patch level
         assert re.fullmatch(r"v?\d+\.\d+(\.\d+)?", tag), f"{name}: image {image} not pinned"
 
