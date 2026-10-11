@@ -37,9 +37,29 @@ when chaining them on a stack that's already run others recently.
 
 ## Browser: the web UI
 
-The CLI only narrates the backend; it never opens a browser. For a demo that also
-shows the UI (Phase 7 — incident list/detail, the approval page, postmortems), run
-the scenario in one terminal and drive the browser in parallel:
+The CLI only narrates the backend; it never opens a browser. Two ways to capture
+the UI, depending on whether you want a reproducible asset or a live walkthrough.
+
+### Scripted screenshots → GIF (what `docs/assets/demo-ui.gif` is)
+
+`scripts/record-ui-demo.py` drives a headless Chromium through the same incident
+`sentinel-demo` just created — login, incident list, Observations/AI Hypotheses,
+remediation timeline, the approval page — and saves one screenshot per stop. It
+needs `playwright` and a Chromium build, deliberately run ephemerally (`uvx`/`uv
+run --with`) rather than as a project dependency, since nothing else in Sentinel
+needs a browser:
+
+```bash
+./scripts/record-demo.sh b                       # creates the incident
+uvx --from playwright playwright install chromium # one-time, ~250 MB
+uv run --with playwright python3 scripts/record-ui-demo.py INC-0001 /tmp/ui-demo
+magick -delay 280 -loop 0 -resize 850x /tmp/ui-demo/*.png docs/assets/demo-ui.gif
+```
+
+(`magick` is ImageMagick — `brew install imagemagick`. Pass the actual incident ref
+`sentinel-demo` just printed, not literally `INC-0001`.)
+
+### Live, for a presentation
 
 ```bash
 ./scripts/record-demo.sh b &      # or run sentinel-demo directly without recording
@@ -52,11 +72,10 @@ scenario runs: the incident appearing on `/` moments after the fault is injected
 the Observations vs. AI Hypotheses split on `/incidents/{ref}` once evidence and
 the investigation land, the DRY-RUN/LIVE banner (confirms this is a real fix), the
 approval page's runbook-content check, and the postmortem generated afterward
-(`/incidents/{ref}/postmortem`, click "Generate draft").
-
-For screen capture: QuickTime Player's "New Screen Recording" (macOS, free, no
-install) or OBS Studio (cross-platform) both work fine — there's nothing
-Sentinel-specific to the capture step itself.
+(`/incidents/{ref}/postmortem`, click "Generate draft"). For screen capture:
+QuickTime Player's "New Screen Recording" (macOS, free, no install) or OBS Studio
+(cross-platform) both work fine — there's nothing Sentinel-specific to the capture
+step itself.
 
 ## A clean take
 

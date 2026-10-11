@@ -34,6 +34,12 @@ the CLI against the real stack:
 
 ![Sentinel detecting a bad deploy, investigating it, and rolling it back after approval](docs/assets/demo-b.gif)
 
+Same incident, in the dashboard: the incident list, Observations (measured data)
+vs. AI Hypotheses (labelled MOCK, never presented as fact) split, the remediation
+timeline, and the approval record with its runbook content-hash check:
+
+![The Sentinel dashboard: incident list, observations vs. AI hypotheses, remediation timeline, and the approval record for the rollback](docs/assets/demo-ui.gif)
+
 ## What runs today
 | Component | Role |
 |---|---|
