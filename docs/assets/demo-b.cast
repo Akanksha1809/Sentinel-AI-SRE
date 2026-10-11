@@ -1,0 +1,11 @@
+{"version":3,"term":{"cols":100,"rows":24},"timestamp":1791707610,"command":"uv run sentinel-demo run b","env":{"SHELL":"/bin/zsh"}}
+[0.964, "o", "[14:03:31] Scenario b (Bad release): Deploy shop-api 1.1.0, which ships a bad price migration (nulls prices for products 6-10, so checkout raises TypeError). Prometheus fires ShopApiHighErrorBurnRate; the mock investigator correlates the error spike with the deployment and recommends rolling back to 1.0.0.\r\n"]
+[14.280, "o", "[14:03:45] Fault triggered. Waiting for ShopApiHighErrorBurnRate to open an incident...\r\n"]
+[84.557, "o", "[14:05:09] Incident INC-0004 opened: 'shop-api is burning its error budget' (severity=critical)\r\n"]
+[17.551, "o", "[14:05:27] Investigation complete (AI-generated hypothesis, MOCK provider (deterministic rules). Not an observation; verify against evidence.): \"The change to version 1.1.0 introduced a regression: unhandled error | TypeError: unsupported operand type(s) for *: 'NoneType' and 'int'.\" (confidence 0.90)\r\n"]
+[0.071, "o", "[14:05:27] Action proposed: rollback-deployment (status=pending_approval)\r\n"]
+[0.203, "o", "[14:05:27] Action approved.\r\n"]
+[0.060, "o", "[14:05:27] Incident status: remediating\r\n"]
+[18.339, "o", "[14:05:46] Incident status: verifying\r\n"]
+[82.406, "o", "[14:07:08] Incident status: resolved\r\n[14:07:08] Incident INC-0004 resolved (resolved_verified=True) — scenario complete.\r\n"]
+[0.967, "x", "0"]

@@ -21,7 +21,9 @@ if ! curl -fsS -m 3 -o /dev/null http://127.0.0.1:8080/readyz; then
 fi
 
 echo "Recording scenario ${SCENARIO} to ${OUT}..."
-asciinema rec --overwrite -c "uv run sentinel-demo run ${SCENARIO}" "${OUT}"
+# Fixed window size: consistent output regardless of the recording terminal's own
+# size (and required in a headless/CI-like shell, which reports 0x0).
+asciinema rec --overwrite --window-size 100x24 -c "uv run sentinel-demo run ${SCENARIO}" "${OUT}"
 echo "Done: ${OUT}"
 echo "Play back:  asciinema play ${OUT}"
 echo "Upload:     asciinema upload ${OUT}"
